@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Hordes.io – Movable UI (Layout Editor)
 // @namespace    https://hordes.io/
-// @version      3.1.0
+// @version      3.2.0
 // @description  Jedes UI-Element einzeln verschieben & per Rand-Griff skalieren (inkl. Buff-Icon-Größe und Minimap selbst), ein-/ausblenden, Hintergründe abschalten, Layout exportieren/importieren. Im Bearbeiten-Modus werden Spiel-Tooltips/Klicks blockiert. Speichert alles, übersteht Game-Reloads.
 // @author       du
 // @match        https://hordes.io/play
@@ -412,7 +412,9 @@
   function injectCSS() {
     if (document.getElementById('mui-style')) return;
     const css = `
-      .mui-hidden{ display:none !important; }
+      /* Ausblenden OHNE Verrutschen der Nachbarn: Box bleibt erhalten */
+      .mui-hidden{ visibility:hidden !important; pointer-events:none !important; }
+      .mui-editing .mui-hidden{ visibility:visible !important; opacity:.4 !important; }
 
       .mui-opt-noskillbg #skillbar{ background:transparent !important; border-color:transparent !important; box-shadow:none !important; }
       .mui-opt-noslotbg #skillbar > .slot{ background:transparent !important; border-color:transparent !important; box-shadow:none !important; }
