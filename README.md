@@ -23,14 +23,29 @@ Unten rechts erscheint der **⛶ Layout**-Button.
 | Element verschieben | Im Bearbeiten-Modus die **Mitte** ziehen (innerstes Element gewinnt) |
 | Größe ändern | Im Bearbeiten-Modus an **Rand/Ecke** ziehen (Resize-Cursor) |
 | Element-Liste & Optionen | Button **☰ Elemente** |
+| Layout export/import | In der Liste oben **⤓ Export** / **⤒ Import** |
 | Ein-/Ausblenden | In der Liste auf **👁 / 🚫** |
 | Element finden | In der Liste auf den **Namen** (Element blinkt kurz) |
 | Einzeln zurücksetzen | In der Liste auf **⟲** |
 | Alles zurücksetzen | Bearbeiten-Modus → **Zurücksetzen** |
 
+Im Bearbeiten-Modus blockiert das Script die normalen Spiel-Eingaben
+(Skill-Tooltips, Fenster-Klicks, Kamera), damit man präzise arbeiten kann.
+
 In der Liste gibt es oben eine Sektion **Optionen**, um störende Hintergründe
 abzuschalten: Skill-Leisten-Hintergrund, Skill-Slot-Rahmen, HP/Mana-Rahmen.
 So lassen sich die Einzelteile frei und ohne Container-Kästen anordnen.
+
+## Layout sichern / übertragen (Export/Import)
+
+Damit du nach einem Update nicht alles neu einstellen musst:
+
+- **⤓ Export** zeigt einen Layout-Code (liegt direkt in der Zwischenablage).
+- **⤒ Import** fragt nach einem Code und stellt das Layout sofort wieder her.
+- Ein Link mit `…/play#mui=<code>` importiert das Layout beim Laden automatisch.
+
+Updates des Scripts setzen deine gespeicherten Positionen **nicht** zurück –
+exportiere trotzdem ab und zu zur Sicherheit.
 
 Speichern passiert automatisch (localStorage) und übersteht die automatischen
 Game-Reloads. Außerhalb des Bearbeiten-Modus verhält sich das Spiel komplett
@@ -43,8 +58,10 @@ Im Bearbeiten-Modus reagiert jedes Element abhängig davon, wo du es packst:
 - **Rand/Ecke ziehen** → Größe ändern (es erscheint der passende Resize-Cursor).
 - Es gewinnt immer das **innerste** Element – HP-Leiste, Mana-Leiste oder ein
   Buff-Container werden direkt angefasst, nicht der ganze Frame.
-- **Buffs/Debuffs:** Breite/Höhe des Containers steuert, wie sie umbrechen
-  (breit = viele nebeneinander, schmal = untereinander).
+- **Buffs/Debuffs:** **Seiten ziehen** = Breite (steuert Umbruch: breit = viele
+  nebeneinander, schmal = untereinander), **oben/unten ziehen** = **Icon-Größe**.
+- **Minimap:** Resize wirkt direkt auf die Karte selbst (das Canvas), nicht nur
+  auf einen Rahmen.
 
 ## Was ist einzeln steuerbar?
 

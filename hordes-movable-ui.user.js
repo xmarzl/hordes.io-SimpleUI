@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Hordes.io – Movable UI (Layout Editor)
 // @namespace    https://hordes.io/
-// @version      3.0.0
-// @description  Jedes UI-Element einzeln verschieben, mit echten Rand-Griffen skalieren und ein-/ausblenden. Hintergründe von Skill-Leiste/Slots/HP-Mana-Rahmen abschaltbar. Bearbeiten-Modus per Button oder F8. Speichert alles, übersteht Game-Reloads.
+// @version      3.1.0
+// @description  Jedes UI-Element einzeln verschieben & per Rand-Griff skalieren (inkl. Buff-Icon-Größe und Minimap selbst), ein-/ausblenden, Hintergründe abschalten, Layout exportieren/importieren. Im Bearbeiten-Modus werden Spiel-Tooltips/Klicks blockiert. Speichert alles, übersteht Game-Reloads.
 // @author       du
 // @match        https://hordes.io/play
 // @run-at       document-idle
@@ -29,8 +29,7 @@
   }
 
   /* =========================================================================
-   *  REGISTRIERUNGEN (nur Einzelteile – keine Ganz-Container mehr!)
-   *  rz:true  -> per Rand-Griff in der Größe veränderbar.
+   *  REGISTRIERUNGEN (nur Einzelteile)   rz:true => per Rand-Griff skalierbar
    * ========================================================================= */
   const REG = [
     // ---- Skills: jeder Slot einzeln ----
@@ -75,12 +74,11 @@
       name: tlName },
 
     // ---- Diverses ----
-    { cat: 'Diverses', sel: '#minimapcontainer', id: 'minimap', name: 'Minimap', rz: true },
+    { cat: 'Diverses', sel: '#minimapcontainer canvas', id: 'minimap', name: 'Minimap', rz: true },
     { cat: 'Diverses', sel: '.l-corner-ll', id: 'chat', name: 'Chat', rz: true },
     { cat: 'Diverses', sel: '#expbar', id: 'expbar', name: 'EXP-Leiste', rz: true },
   ];
 
-  // Globale Hintergrund-/Rahmen-Schalter (Body-Klassen, keine eigenen Elemente)
   const OPTIONS = [
     { key: 'noskillbg',  cls: 'mui-opt-noskillbg',  name: 'Skill-Leiste: Hintergrund ausblenden' },
     { key: 'noslotbg',   cls: 'mui-opt-noslotbg',   name: 'Skill-Slots: Rahmen ausblenden' },
@@ -89,6 +87,8 @@
 
   const CAT_ORDER = ['Skills', 'Spieler', 'Ziel', 'Gruppe', 'Menü-Buttons', 'Statusleiste', 'Diverses', 'Fenster'];
   const CURSOR = { e: 'ew-resize', w: 'ew-resize', n: 'ns-resize', s: 'ns-resize', ne: 'nesw-resize', sw: 'nesw-resize', nw: 'nwse-resize', se: 'nwse-resize' };
+  // Spiel-Events, die im Bearbeiten-Modus blockiert werden (Tooltips, Fenster öffnen, Kamera)
+  const BLOCK_EVENTS = ['click', 'dblclick', 'mousedown', 'mouseup', 'mouseover', 'mouseout', 'mouseenter', 'mouseleave', 'pointerover', 'pointerout', 'pointerenter', 'pointerleave', 'contextmenu', 'wheel'];
 
   const STORAGE_KEY = 'hordes-movable-ui-v3';
   const EDGE = 8;
@@ -96,13 +96,15 @@
   /* =========================================================================
    *  STATE
    * ========================================================================= */
-  let state = loadState();                 // { items:{id:{l,t,w,h,hidden}}, options:{} }
+  let state = loadState();                 // { items:{id:{l,t,w,h,bs,hidden}}, options:{} }
   const registry = new Map();              // id -> { el, name, cat }
-  let editMode = false, listOpen = false;
+  let editMode = false, listOpen = false, hashImported = false;
   let drag = null, hoverHost = null, layoutObserver = null, saveTimer = null;
 
   const cssEsc = (window.CSS && CSS.escape) ? CSS.escape : (s) => String(s).replace(/[^\w-]/g, '\\$&');
   function debounce(fn, ms) { let t; return function () { clearTimeout(t); t = setTimeout(fn, ms); }; }
+  function enc(s) { return btoa(unescape(encodeURIComponent(s))); }
+  function dec(s) { return decodeURIComponent(escape(atob(s))); }
 
   function loadState() {
     try { const r = localStorage.getItem(STORAGE_KEY); if (r) { const p = JSON.parse(r); if (p && p.items) { p.options = p.options || {}; return p; } } } catch (e) {}
@@ -128,16 +130,19 @@
   function ensurePositioned(el) { if (getComputedStyle(el).position === 'static') el.style.position = 'relative'; }
 
   function applySaved(el, id) {
-    const c = state.items[id]; if (!c) { el.classList.remove('mui-hidden'); return; }
+    const c = state.items[id];
+    el.classList.remove('mui-hidden', 'mui-bs'); el.style.removeProperty('--mui-bs');
+    if (!c) { el.style.left = el.style.top = el.style.width = el.style.height = ''; return; }
     if (c.l != null || c.t != null || c.w != null || c.h != null) ensurePositioned(el);
-    if (c.l != null) el.style.left = c.l + 'px';
-    if (c.t != null) el.style.top = c.t + 'px';
-    if (c.w != null) el.style.width = c.w + 'px';
-    if (c.h != null) el.style.height = c.h + 'px';
-    el.classList.toggle('mui-hidden', !!c.hidden);
+    el.style.left = c.l != null ? c.l + 'px' : '';
+    el.style.top = c.t != null ? c.t + 'px' : '';
+    el.style.width = c.w != null ? c.w + 'px' : '';
+    el.style.height = c.h != null ? c.h + 'px' : '';
+    if (c.bs != null) { el.style.setProperty('--mui-bs', c.bs + 'px'); el.classList.add('mui-bs'); }
+    if (c.hidden) el.classList.add('mui-hidden');
   }
-
   function applyOptions() { OPTIONS.forEach(o => document.body.classList.toggle(o.cls, !!state.options[o.key])); }
+  function reapplyAll() { document.querySelectorAll('[data-mui-id]').forEach(el => applySaved(el, el.dataset.muiId)); }
 
   /* =========================================================================
    *  SCAN / REGISTRIERUNG
@@ -156,7 +161,7 @@
 
   function scan() {
     if (!document.querySelector('.layout')) return;
-    if (layoutObserver) layoutObserver.disconnect();   // eigene Schreibvorgänge nicht zurück-triggern
+    if (layoutObserver) layoutObserver.disconnect();
     try {
       REG.forEach(r => {
         const els = r.multi ? document.querySelectorAll(r.sel) : (document.querySelector(r.sel) ? [document.querySelector(r.sel)] : []);
@@ -173,7 +178,7 @@
   const scheduleListRender = debounce(() => { if (listOpen) renderList(); }, 400);
 
   /* =========================================================================
-   *  DRAG & RESIZE (nur im Bearbeiten-Modus)
+   *  DRAG & RESIZE
    * ========================================================================= */
   function hostFromEvent(e) {
     const host = e.target.closest('[data-mui-id]');
@@ -189,19 +194,24 @@
     if (L) return 'w'; if (R) return 'e'; if (T) return 'n'; if (B) return 's';
     return null;
   }
+  function isInOurUI(t) { return t.closest && (t.closest('#mui-panel') || t.closest('#mui-list')); }
 
   function onPointerDown(e) {
     if (!editMode || e.button !== 0) return;
+    if (isInOurUI(e.target)) return;
+    e.preventDefault(); e.stopPropagation();           // Spiel im Edit-Modus nie reagieren lassen
     const host = hostFromEvent(e); if (!host) return;
-    e.preventDefault(); e.stopPropagation();
     ensurePositioned(host);
     const cs = getComputedStyle(host);
     const zone = host.dataset.muiResizable ? resizeZone(host, e) : null;
+    const slot = host.querySelector('.slot');
     drag = {
       host, id: host.dataset.muiId, mode: zone || 'move', scale: ancestorScale(host),
+      isBuff: host.classList.contains('buffarray'),
       sx: e.clientX, sy: e.clientY,
       bl: parseFloat(cs.left) || 0, bt: parseFloat(cs.top) || 0,
       bw: host.offsetWidth, bh: host.offsetHeight,
+      bbs: (slot ? slot.offsetWidth : 0) || 28,
     };
     try { host.setPointerCapture(e.pointerId); } catch (err) {}
     host.classList.add('mui-dragging');
@@ -214,16 +224,31 @@
     if (d.mode === 'move') {
       const l = Math.round(d.bl + dx), t = Math.round(d.bt + dy);
       d.host.style.left = l + 'px'; d.host.style.top = t + 'px'; c.l = l; c.t = t;
-    } else {
-      let w = d.bw, h = d.bh, l = d.bl, t = d.bt;
+      saveSoon(); return;
+    }
+    const horiz = d.mode.includes('e') || d.mode.includes('w');
+    const vert = d.mode.includes('n') || d.mode.includes('s');
+
+    if (horiz) {
+      let w = d.bw, l = d.bl;
       if (d.mode.includes('e')) w = d.bw + dx;
       if (d.mode.includes('w')) { w = d.bw - dx; l = d.bl + dx; }
-      if (d.mode.includes('s')) h = d.bh + dy;
-      if (d.mode.includes('n')) { h = d.bh - dy; t = d.bt + dy; }
-      w = Math.max(12, Math.round(w)); h = Math.max(8, Math.round(h));
-      d.host.style.width = w + 'px'; d.host.style.height = h + 'px'; c.w = w; c.h = h;
+      w = Math.max(12, Math.round(w)); d.host.style.width = w + 'px'; c.w = w;
       if (d.mode.includes('w')) { d.host.style.left = Math.round(l) + 'px'; c.l = Math.round(l); }
-      if (d.mode.includes('n')) { d.host.style.top = Math.round(t) + 'px'; c.t = Math.round(t); }
+    }
+    if (vert) {
+      if (d.isBuff) {
+        // bei Buffs: vertikal = Icon-Größe statt Container-Höhe
+        const vd = (d.mode.includes('s') ? dy : 0) + (d.mode.includes('n') ? -dy : 0);
+        const bs = Math.max(12, Math.min(96, Math.round(d.bbs + vd)));
+        d.host.style.setProperty('--mui-bs', bs + 'px'); d.host.classList.add('mui-bs'); c.bs = bs;
+      } else {
+        let h = d.bh, t = d.bt;
+        if (d.mode.includes('s')) h = d.bh + dy;
+        if (d.mode.includes('n')) { h = d.bh - dy; t = d.bt + dy; }
+        h = Math.max(8, Math.round(h)); d.host.style.height = h + 'px'; c.h = h;
+        if (d.mode.includes('n')) { d.host.style.top = Math.round(t) + 'px'; c.t = Math.round(t); }
+      }
     }
     saveSoon();
   }
@@ -231,15 +256,23 @@
   function onPointerMove(e) {
     if (drag) { e.preventDefault(); e.stopPropagation(); doDragMove(e); return; }
     if (!editMode) return;
+    e.stopPropagation();                               // Hover/Kamera des Spiels unterbinden
     let host = e.target.closest('[data-mui-id]');
-    if (host && (host.closest('#mui-panel') || host.closest('#mui-list'))) host = null;
+    if (host && isInOurUI(host)) host = null;
     if (hoverHost && hoverHost !== host) { hoverHost.style.cursor = ''; hoverHost = null; }
     if (!host) return;
     const zone = host.dataset.muiResizable ? resizeZone(host, e) : null;
     host.style.cursor = zone ? CURSOR[zone] : 'move';
     hoverHost = host;
   }
-  function onPointerUp() { if (!drag) return; drag.host.classList.remove('mui-dragging'); drag = null; }
+  function onPointerUp(e) { if (editMode) e.stopPropagation(); if (!drag) return; drag.host.classList.remove('mui-dragging'); drag = null; }
+
+  // Blockt alle übrigen Spiel-Events im Bearbeiten-Modus (Tooltips, Klicks, Zoom)
+  function swallow(e) {
+    if (!editMode || isInOurUI(e.target)) return;
+    e.stopPropagation();
+    if (e.cancelable) e.preventDefault();
+  }
 
   /* =========================================================================
    *  AKTIONEN
@@ -250,14 +283,13 @@
     saveSoon(); if (listOpen) renderList();
   }
   function resetOne(id) {
-    const el = elOf(id);
-    if (el) { el.style.left = el.style.top = el.style.width = el.style.height = ''; el.classList.remove('mui-hidden'); }
-    delete state.items[id]; saveSoon(); if (listOpen) renderList();
+    delete state.items[id];
+    const el = elOf(id); if (el) applySaved(el, id);
+    saveSoon(); if (listOpen) renderList();
   }
   function resetAll() {
     if (!confirm('Alle Positionen, Größen, Sichtbarkeiten und Optionen zurücksetzen?')) return;
-    document.querySelectorAll('[data-mui-id]').forEach(el => { el.style.left = el.style.top = el.style.width = el.style.height = ''; el.classList.remove('mui-hidden'); });
-    state.items = {}; state.options = {}; applyOptions(); saveSoon(); if (listOpen) renderList();
+    state.items = {}; state.options = {}; applyOptions(); reapplyAll(); saveSoon(); if (listOpen) renderList();
   }
   function toggleOption(key) { state.options[key] = !state.options[key]; applyOptions(); saveSoon(); if (listOpen) renderList(); }
   let flashTimer = null;
@@ -266,6 +298,33 @@
     if (cfgOf(id).hidden) setHidden(id, false);
     el.classList.add('mui-flash'); clearTimeout(flashTimer);
     flashTimer = setTimeout(() => el.classList.remove('mui-flash'), 1100);
+  }
+
+  function exportLayout() {
+    const code = enc(JSON.stringify({ items: state.items, options: state.options }));
+    try { navigator.clipboard.writeText(code); } catch (e) {}
+    window.prompt('Layout-Code (ist bereits kopiert – sonst Strg/Cmd+C):', code);
+  }
+  function importLayout() {
+    const code = window.prompt('Layout-Code hier einfügen:');
+    if (code) applyImport(code.trim());
+  }
+  function applyImport(code) {
+    try {
+      const obj = JSON.parse(dec(code));
+      if (!obj || typeof obj !== 'object' || !obj.items) throw new Error('bad');
+      state.items = obj.items || {}; state.options = obj.options || {};
+      applyOptions(); reapplyAll(); saveSoon(); if (listOpen) renderList();
+    } catch (e) { window.alert('Ungültiger Layout-Code.'); }
+  }
+  function importFromHash() {
+    if (hashImported) return;
+    const m = (location.hash || '').match(/mui=([^&]+)/);
+    if (m) {
+      hashImported = true;
+      applyImport(decodeURIComponent(m[1]));
+      try { history.replaceState(null, '', location.pathname + location.search); } catch (e) {}
+    }
   }
 
   /* =========================================================================
@@ -288,7 +347,9 @@
 
   function renderList() {
     const l = document.getElementById('mui-list'); if (!l) return;
-    let html = '<div class="mui-list-head">Elemente<span class="mui-list-hint">Name = finden · 👁 ein/aus · ⟲ reset · Rand ziehen = Größe</span></div>';
+    let html = '<div class="mui-list-head"><div class="mui-list-title">Elemente'
+      + '<div class="mui-io"><button class="mui-act" data-act="export">⤓ Export</button><button class="mui-act" data-act="import">⤒ Import</button></div></div>'
+      + '<span class="mui-list-hint">Mitte = verschieben · Rand = Größe · bei Buffs oben/unten = Icon-Größe</span></div>';
 
     html += '<div class="mui-cat">Optionen</div>';
     OPTIONS.forEach(o => {
@@ -321,6 +382,7 @@
     const list = document.createElement('div');
     list.id = 'mui-list';
     list.addEventListener('click', e => {
+      const act = e.target.closest('.mui-act'); if (act) { act.dataset.act === 'export' ? exportLayout() : importLayout(); return; }
       const opt = e.target.closest('.mui-optrow'); if (opt) { toggleOption(opt.dataset.opt); return; }
       const row = e.target.closest('.mui-row'); if (!row) return;
       const id = row.dataset.id; if (!id) return;
@@ -352,16 +414,19 @@
     const css = `
       .mui-hidden{ display:none !important; }
 
-      /* Hintergrund-/Rahmen-Schalter */
       .mui-opt-noskillbg #skillbar{ background:transparent !important; border-color:transparent !important; box-shadow:none !important; }
       .mui-opt-noslotbg #skillbar > .slot{ background:transparent !important; border-color:transparent !important; box-shadow:none !important; }
       .mui-opt-nobarframe .barsInner{ background:transparent !important; border-color:transparent !important; box-shadow:none !important; }
 
-      /* Buffs umbrechbar machen -> Resize steuert Spalten/Zeilen */
+      /* Buffs: umbrechbar + eigene Icon-Größe */
       .buffarray[data-mui-id]{ flex-wrap:wrap; align-content:flex-start; }
       .mui-editing .buffarray[data-mui-id]{ min-width:20px; min-height:20px; }
+      .buffarray[data-mui-id].mui-bs > .slot{ width:var(--mui-bs) !important; height:var(--mui-bs) !important; min-width:0 !important; min-height:0 !important; }
+      .buffarray[data-mui-id].mui-bs > .slot img,
+      .buffarray[data-mui-id].mui-bs > .slot .icon{ width:100% !important; height:100% !important; }
 
       /* Bearbeiten-Modus */
+      .mui-editing .slotdescription{ display:none !important; }   /* Spiel-Tooltips aus */
       .mui-editing [data-mui-id]{ outline:1px dashed rgba(120,200,255,.55); outline-offset:1px; cursor:move; }
       .mui-editing [data-mui-resizable]{ outline-color:rgba(150,255,210,.6); }
       .mui-editing [data-mui-id]:hover{ outline-width:2px; outline-style:solid; }
@@ -376,7 +441,6 @@
       @keyframes muiFlash{ 0%,100%{ outline-color:rgba(255,220,120,0);} 50%{ outline-color:rgba(255,220,120,1);} }
       .mui-flash{ outline:3px solid rgba(255,220,120,1) !important; outline-offset:2px; animation:muiFlash .55s ease-in-out 2; }
 
-      /* Panel */
       #mui-panel{ position:fixed; right:14px; bottom:14px; z-index:2147483647; display:flex; align-items:center; gap:8px;
         font:600 13px/1 -apple-system,"Segoe UI",system-ui,sans-serif; color:#e7f1ff; user-select:none; }
       #mui-panel button{ appearance:none; border:1px solid rgba(120,160,200,.35); background:rgba(20,26,36,.82);
@@ -392,14 +456,18 @@
       #mui-panel .mui-hint{ background:rgba(20,26,36,.82); backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px);
         border:1px solid rgba(120,160,200,.25); border-radius:10px; padding:8px 12px; color:#acc4dd; font-weight:500; }
 
-      /* Liste */
       #mui-list{ position:fixed; right:14px; bottom:64px; z-index:2147483647; width:320px; max-height:64vh; overflow-y:auto;
         display:none; background:rgba(16,20,28,.95); backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px);
         border:1px solid rgba(120,160,200,.3); border-radius:14px; box-shadow:0 10px 40px rgba(0,0,0,.5);
         color:#e7f1ff; font:500 13px/1.4 -apple-system,"Segoe UI",system-ui,sans-serif; padding:10px; }
       #mui-list.mui-show{ display:block; }
-      .mui-list-head{ font-weight:700; font-size:14px; padding:2px 4px 8px; border-bottom:1px solid rgba(120,160,200,.2); margin-bottom:6px; }
-      .mui-list-hint{ display:block; font-weight:500; font-size:10px; color:#8aa4be; margin-top:2px; }
+      .mui-list-head{ padding:2px 4px 8px; border-bottom:1px solid rgba(120,160,200,.2); margin-bottom:6px; }
+      .mui-list-title{ display:flex; align-items:center; justify-content:space-between; font-weight:700; font-size:14px; }
+      .mui-io{ display:flex; gap:6px; }
+      .mui-io .mui-act{ appearance:none; border:1px solid rgba(120,160,200,.35); background:rgba(30,38,52,.8); color:#e7f1ff;
+        font:600 11px/1 -apple-system,system-ui,sans-serif; padding:5px 8px; border-radius:7px; cursor:pointer; }
+      .mui-io .mui-act:hover{ background:rgba(50,64,86,.95); }
+      .mui-list-hint{ display:block; font-weight:500; font-size:10px; color:#8aa4be; margin-top:6px; }
       .mui-cat{ font-size:11px; text-transform:uppercase; letter-spacing:.5px; color:#7fa7d6; font-weight:700; margin:10px 4px 3px; }
       .mui-row{ display:grid; grid-template-columns:1fr auto auto; align-items:center; gap:4px; padding:3px 4px; border-radius:7px; }
       .mui-optrow{ grid-template-columns:1fr auto; }
@@ -426,6 +494,7 @@
     document.addEventListener('pointerdown', onPointerDown, true);
     document.addEventListener('pointermove', onPointerMove, true);
     document.addEventListener('pointerup', onPointerUp, true);
+    BLOCK_EVENTS.forEach(t => document.addEventListener(t, swallow, { capture: true, passive: false }));
     window.addEventListener('keydown', e => { if (e.key === 'F8') { e.preventDefault(); setEditMode(!editMode); } });
   }
 
@@ -437,6 +506,7 @@
     injectCSS(); buildPanel(); wireGlobalListeners(); applyOptions();
     if (!layoutObserver) layoutObserver = new MutationObserver(queueScan);
     scan();
+    importFromHash();
   }
   new MutationObserver(() => { if (document.querySelector('.layout')) boot(); }).observe(document.body, { childList: true, subtree: true });
   boot();
