@@ -19,13 +19,14 @@ minimal, no dependencies.
    (or create a new script and paste its contents).
 3. Save, open / reload `https://hordes.io/play`.
 
-A **⛶ Layout** button appears in the bottom-right corner.
+Open the game **Settings (cog) → Movable UI** tab, or just press **`F8`**.
+The editing toolbar only appears while you are editing.
 
 ### Usage
 
 | Action | How |
 |---|---|
-| Toggle edit mode | **⛶ Layout** button or the **`F8`** key |
+| Toggle edit mode | **Settings → Movable UI**, or the **`F8`** key |
 | Move an element | In edit mode, drag the **center** (innermost element wins) |
 | Resize | In edit mode, drag an **edge/corner** (resize cursor appears) |
 | Element list & options | **☰ Elements** button |
@@ -46,6 +47,9 @@ The **Options** section (top of the list) removes distracting backgrounds
 (skill-bar background, skill-slot frames, HP/Mana frame) and can **split
 buffs and debuffs** into two separate, freely placeable containers — so the
 individual parts float freely without container boxes.
+
+The **Settings → Movable UI** tab additionally toggles the HP/Mana bar text:
+hide the name / level / number, or show the value as a **percentage**.
 
 ### Save / transfer your layout (export / import)
 
@@ -116,13 +120,14 @@ macht. Modern, minimal, ohne Abhängigkeiten.
    ziehen (oder neues Script anlegen und Inhalt einfügen).
 3. Speichern, `https://hordes.io/play` öffnen / neu laden.
 
-Unten rechts erscheint der **⛶ Layout**-Button.
+Öffne im Spiel **Einstellungen (Zahnrad) → Movable UI**, oder drücke **`F8`**.
+Die Bearbeiten-Leiste erscheint nur während des Bearbeitens.
 
 ### Bedienung
 
 | Aktion | Wie |
 |---|---|
-| Bearbeiten-Modus an/aus | Button **⛶ Layout** oder Taste **`F8`** |
+| Bearbeiten-Modus an/aus | **Einstellungen → Movable UI**, oder Taste **`F8`** |
 | Element verschieben | Im Bearbeiten-Modus die **Mitte** ziehen (innerstes Element gewinnt) |
 | Größe ändern | Im Bearbeiten-Modus an **Rand/Ecke** ziehen (Resize-Cursor) |
 | Element-Liste & Optionen | Button **☰ Elemente** |
@@ -143,6 +148,9 @@ In der Liste gibt es oben eine Sektion **Optionen**, um störende Hintergründe
 abzuschalten (Skill-Leisten-Hintergrund, Skill-Slot-Rahmen, HP/Mana-Rahmen)
 und **Buffs & Debuffs zu trennen** (zwei getrennt platzierbare Container).
 So lassen sich die Einzelteile frei und ohne Container-Kästen anordnen.
+
+Der Reiter **Einstellungen → Movable UI** schaltet zusätzlich den HP/Mana-Text:
+Name / Level / Zahl ausblenden oder die Zahl als **Prozent** anzeigen.
 
 ### Layout sichern / übertragen (Export/Import)
 

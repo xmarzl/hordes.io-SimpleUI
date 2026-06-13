@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Hordes.io – Movable UI (Layout Editor)
 // @namespace    https://hordes.io/
-// @version      3.3.0
+// @version      3.4.0
 // @description  Jedes UI-Element einzeln verschieben & per Rand-Griff skalieren (inkl. Buff-Icon-Größe und Minimap selbst), ein-/ausblenden, Hintergründe abschalten, Layout exportieren/importieren. Im Bearbeiten-Modus werden Spiel-Tooltips/Klicks blockiert. Speichert alles, übersteht Game-Reloads.
 // @author       xmarzl
 // @match        https://hordes.io/play
@@ -84,6 +84,15 @@
     { key: 'noslotbg',   cls: 'mui-opt-noslotbg',   name: 'Skill-Slots: Rahmen ausblenden' },
     { key: 'nobarframe', cls: 'mui-opt-nobarframe', name: 'HP/Mana: Rahmen ausblenden' },
   ];
+  // HP/MP-Text-Schalter (Body-Klassen; greifen auf allen HP/MP-Leisten)
+  const TEXTOPTS = [
+    { key: 'hpnoname',  cls: 'simpleui-hp-noname',  name: 'Lebensleiste: Name ausblenden' },
+    { key: 'hpnonum',   cls: 'simpleui-hp-nonum',   name: 'Lebensleiste: Zahl ausblenden' },
+    { key: 'hppct',     cls: 'simpleui-hp-pct',     name: 'Lebensleiste: Zahl in Prozent' },
+    { key: 'mpnolevel', cls: 'simpleui-mp-nolevel', name: 'Mana/Wut/Energie: Level ausblenden' },
+    { key: 'mpnonum',   cls: 'simpleui-mp-nonum',   name: 'Mana/Wut/Energie: Zahl ausblenden' },
+    { key: 'mppct',     cls: 'simpleui-mp-pct',     name: 'Mana/Wut/Energie: Zahl in Prozent' },
+  ];
 
   const CAT_ORDER = ['Skills', 'Spieler', 'Ziel', 'Gruppe', 'Buffs/Debuffs', 'Menü-Buttons', 'Statusleiste', 'Diverses', 'Fenster'];
   const CURSOR = { e: 'ew-resize', w: 'ew-resize', n: 'ns-resize', s: 'ns-resize', ne: 'nesw-resize', sw: 'nesw-resize', nw: 'nwse-resize', se: 'nwse-resize' };
@@ -142,7 +151,32 @@
     if (c.bs != null) { el.style.setProperty('--mui-bs', c.bs + 'px'); el.classList.add('mui-bs'); }
     if (c.hidden) el.classList.add('mui-hidden');
   }
-  function applyOptions() { OPTIONS.forEach(o => document.body.classList.toggle(o.cls, !!state.options[o.key])); }
+  function applyOptions() {
+    OPTIONS.forEach(o => document.body.classList.toggle(o.cls, !!state.options[o.key]));
+    TEXTOPTS.forEach(o => document.body.classList.toggle(o.cls, !!state.options[o.key]));
+  }
+
+  // Prozent-Anzeige in HP/MP-Leisten (eigene Span, aus Balkenbreite gespeist)
+  function setupPctBars() {
+    document.querySelectorAll('.progressBar.bghealth:not(.hpdelta):not(.simpleui-pct-initd), .progressBar.bgmana:not(.simpleui-pct-initd)').forEach(pb => {
+      pb.classList.add('simpleui-pct-initd');
+      const span = document.createElement('span'); span.className = 'simpleui-pct';
+      pb.appendChild(span);
+      const upd = () => { const w = parseFloat(pb.style.width); span.textContent = (isNaN(w) ? 0 : Math.round(w)) + '%'; };
+      upd();
+      new MutationObserver(upd).observe(pb, { attributes: true, attributeFilter: ['style'] });
+    });
+  }
+
+  // Namens-Labels im Editor: nahe oberem Bildschirmrand nach unten klappen
+  function updateLabelDirs() {
+    if (!editMode) return;
+    document.querySelectorAll('[data-mui-id]').forEach(el => {
+      if (el.closest('#mui-panel') || el.closest('#mui-list')) return;
+      const r = el.getBoundingClientRect();
+      el.classList.toggle('mui-lbl-below', r.top < 40);
+    });
+  }
   function reapplyAll() { document.querySelectorAll('[data-mui-id]').forEach(el => applySaved(el, el.dataset.muiId)); }
 
   /* =========================================================================
@@ -169,9 +203,12 @@
         els.forEach((el, i) => register(el, r.multi ? r.id(el, i) : r.id, r.multi ? r.name(el, i) : r.name, r.cat, r.rz));
       });
       document.querySelectorAll('.window').forEach(el => {
-        const t = el.querySelector('[name="title"]'); const title = (t ? t.textContent.trim() : '') || 'Fenster';
+        const t = el.querySelector('.titleframe .title') || el.querySelector('[name="title"]');
+        const title = (t ? t.textContent.trim() : '') || 'Fenster';
         register(el, 'win:' + title, title, 'Fenster', true);
       });
+      setupPctBars();
+      injectSettingsTab();
       if (state.options.splitbuffs) document.querySelectorAll('.buffarray[data-mui-id]:not(.mui-splitsource)').forEach(setupSplit);
     } catch (err) { /* nie den Tab blockieren */ }
     finally { if (layoutObserver) { const lay = document.querySelector('.layout'); if (lay) layoutObserver.observe(lay, { childList: true, subtree: true }); } }
@@ -267,7 +304,7 @@
     host.style.cursor = zone ? CURSOR[zone] : 'move';
     hoverHost = host;
   }
-  function onPointerUp(e) { if (editMode) e.stopPropagation(); if (!drag) return; drag.host.classList.remove('mui-dragging'); drag = null; }
+  function onPointerUp(e) { if (editMode) e.stopPropagation(); if (!drag) return; drag.host.classList.remove('mui-dragging'); drag = null; updateLabelDirs(); }
 
   // Blockt alle übrigen Spiel-Events im Bearbeiten-Modus (Tooltips, Klicks, Zoom)
   function swallow(e) {
@@ -381,6 +418,71 @@
   }
 
   /* =========================================================================
+   *  SETTINGS-INTEGRATION: eigener Reiter „Movable UI" im Spiel-Settings-Fenster
+   * ========================================================================= */
+  function suiBtn(label, onClick) {
+    const b = document.createElement('div'); b.className = 'btn blue simpleui-btn'; b.textContent = label;
+    b.addEventListener('click', onClick); return b;
+  }
+  function suiToggleRow(grid, label, isOn, onToggle) {
+    const a = document.createElement('div'); a.textContent = label;
+    const b = document.createElement('div'); b.className = 'btn checkbox' + (isOn ? ' active' : '');
+    b.addEventListener('click', () => { b.classList.toggle('active'); onToggle(); });
+    grid.appendChild(a); grid.appendChild(b);
+  }
+  function suiHead(grid, text) {
+    const a = document.createElement('div'); a.className = 'textprimary'; a.textContent = text;
+    const b = document.createElement('div'); grid.appendChild(a); grid.appendChild(b);
+  }
+  function buildSettingsPane() {
+    const pane = document.createElement('div'); pane.className = 'menu panel-black scrollbar simpleui-pane'; pane.style.display = 'none';
+    const h = document.createElement('h3'); h.className = 'textprimary'; h.textContent = 'Movable UI'; pane.appendChild(h);
+    const actions = document.createElement('div'); actions.className = 'simpleui-actions';
+    actions.appendChild(suiBtn('✏️ Bearbeiten-Modus (F8)', () => {
+      const win = pane.closest('.window'); const x = win && win.querySelector('.titleframe img[src*="cross"]');
+      if (x) x.click();
+      setEditMode(true);
+    }));
+    actions.appendChild(suiBtn('☰ Elemente-Liste', () => { setListOpen(!listOpen); }));
+    actions.appendChild(suiBtn('⤓ Export', exportLayout));
+    actions.appendChild(suiBtn('⤒ Import', importLayout));
+    actions.appendChild(suiBtn('↺ Reset', resetAll));
+    pane.appendChild(actions);
+    const grid = document.createElement('div'); grid.className = 'settings simpleui-grid';
+    suiHead(grid, 'Hintergründe');
+    OPTIONS.forEach(o => suiToggleRow(grid, o.name, !!state.options[o.key], () => toggleOption(o.key)));
+    suiHead(grid, 'Buffs');
+    suiToggleRow(grid, 'Buffs & Debuffs trennen', !!state.options.splitbuffs, () => setSplitBuffs(!state.options.splitbuffs));
+    suiHead(grid, 'Lebensleiste (Text)');
+    ['hpnoname', 'hpnonum', 'hppct'].forEach(k => suiToggleRow(grid, TEXTOPTS.find(t => t.key === k).name, !!state.options[k], () => toggleOption(k)));
+    suiHead(grid, 'Mana / Wut / Energie (Text)');
+    ['mpnolevel', 'mpnonum', 'mppct'].forEach(k => suiToggleRow(grid, TEXTOPTS.find(t => t.key === k).name, !!state.options[k], () => toggleOption(k)));
+    pane.appendChild(grid);
+    return pane;
+  }
+  function injectSettingsTab() {
+    const $divide = document.querySelector('.window .divide:not(.simpleui-initd)');
+    if (!$divide) return;
+    $divide.classList.add('simpleui-initd');
+    const $choices = $divide.querySelector(':scope > div');
+    const $gameMenu = $divide.querySelector(':scope > .menu');
+    if (!$choices) return;
+    const $choice = document.createElement('div'); $choice.className = 'choice simpleui-choice'; $choice.textContent = 'Movable UI';
+    $choices.appendChild($choice);
+    const $pane = buildSettingsPane();
+    $divide.appendChild($pane);
+    const activate = () => {
+      $divide.querySelectorAll('.choice').forEach(c => c.classList.remove('active'));
+      $choice.classList.add('active');
+      if ($gameMenu) $gameMenu.style.display = 'none';
+      $pane.style.display = '';
+    };
+    const deactivate = () => { $choice.classList.remove('active'); $pane.style.display = 'none'; if ($gameMenu) $gameMenu.style.display = ''; };
+    $choice.addEventListener('click', activate);
+    $choices.querySelectorAll('.choice:not(.simpleui-choice)').forEach(c => c.addEventListener('click', deactivate));
+  }
+
+  /* =========================================================================
    *  PANEL & LISTE
    * ========================================================================= */
   function setEditMode(on) {
@@ -389,6 +491,7 @@
     const p = document.getElementById('mui-panel'); if (p) p.classList.toggle('mui-open', on);
     const t = document.getElementById('mui-toggle'); if (t) t.textContent = on ? '✓ Fertig' : '⛶ Layout';
     if (hoverHost) { hoverHost.style.cursor = ''; hoverHost = null; }
+    if (on) updateLabelDirs();
     if (!on) setListOpen(false);
   }
   function setListOpen(on) {
@@ -471,7 +574,7 @@
     const css = `
       /* Ausblenden OHNE Verrutschen der Nachbarn: Box bleibt erhalten */
       .mui-hidden{ visibility:hidden !important; pointer-events:none !important; }
-      .mui-editing .mui-hidden{ visibility:visible !important; opacity:.4 !important; }
+      .mui-editing .mui-hidden{ visibility:visible !important; opacity:.4 !important; pointer-events:auto !important; }
 
       .mui-opt-noskillbg #skillbar{ background:transparent !important; border-color:transparent !important; box-shadow:none !important; }
       .mui-opt-noslotbg #skillbar > .slot{ background:transparent !important; border-color:transparent !important; box-shadow:none !important; }
@@ -484,12 +587,35 @@
       .buffarray[data-mui-id].mui-bs .slot img{ width:100% !important; height:100% !important; max-width:none !important; }
 
       /* Geteilte Buff/Debuff-Container (Klone, Svelte-sicher) */
-      .mui-bcont{ position:relative; display:flex; flex-wrap:wrap; align-content:flex-start; gap:1px; }
+      .mui-bcont{ position:absolute; display:flex; flex-wrap:wrap; align-content:flex-start; gap:1px; }
       .mui-editing .mui-bcont{ min-width:24px; min-height:24px; }
       .mui-bcont.mui-bs .slot{ width:var(--mui-bs) !important; height:var(--mui-bs) !important; min-width:0 !important; min-height:0 !important; }
       .mui-bcont .slot img{ max-width:none !important; }
       .mui-bcont.mui-bs .slot img{ width:100% !important; height:100% !important; }
       .mui-splitsource{ position:absolute !important; width:1px !important; height:1px !important; overflow:hidden !important; opacity:0 !important; pointer-events:none !important; }
+
+      /* HP/MP-Text-Optionen */
+      .simpleui-hp-noname  .progressBar.bghealth > .left{ display:none !important; }
+      .simpleui-hp-nonum   .progressBar.bghealth > .right{ display:none !important; }
+      .simpleui-mp-nolevel .progressBar.bgmana > .left{ display:none !important; }
+      .simpleui-mp-nonum   .progressBar.bgmana > .right{ display:none !important; }
+      .simpleui-pct{ position:absolute; right:7px; z-index:1; display:none; }
+      .simpleui-hp-pct .progressBar.bghealth > .right{ display:none !important; }
+      .simpleui-hp-pct .progressBar.bghealth > .simpleui-pct{ display:inline !important; }
+      .simpleui-mp-pct .progressBar.bgmana > .right{ display:none !important; }
+      .simpleui-mp-pct .progressBar.bgmana > .simpleui-pct{ display:inline !important; }
+
+      /* Panel nur im Bearbeiten-Modus sichtbar */
+      body:not(.mui-editing) #mui-panel{ display:none !important; }
+
+      /* Settings-Reiter „Movable UI" */
+      .simpleui-choice{ cursor:pointer; }
+      .simpleui-pane h3{ margin-top:0; }
+      .simpleui-actions{ display:flex; flex-wrap:wrap; gap:6px; margin-bottom:10px; }
+      .simpleui-actions .simpleui-btn{ cursor:pointer; }
+      .simpleui-grid{ display:grid; grid-template-columns:2fr 1fr; gap:6px 10px; align-items:center; }
+      .simpleui-grid .textprimary{ margin-top:8px; }
+      .simpleui-grid .btn.checkbox{ justify-self:start; }
 
       /* Bearbeiten-Modus */
       .mui-editing .slotdescription{ display:none !important; }   /* Spiel-Tooltips aus */
@@ -497,10 +623,12 @@
       .mui-editing [data-mui-resizable]{ outline-color:rgba(150,255,210,.6); }
       .mui-editing [data-mui-id]:hover{ outline-width:2px; outline-style:solid; }
       .mui-editing [data-mui-id].mui-dragging{ outline:2px solid rgba(255,210,120,.95); }
-      .mui-editing [data-mui-id]:hover::after{
+      .mui-editing [data-mui-id]::after{
         content:attr(data-mui-name); position:absolute; top:0; left:0; transform:translateY(-100%);
-        background:rgba(18,22,30,.96); color:#cfe8ff; font:600 11px/1.5 -apple-system,"Segoe UI",system-ui,sans-serif;
-        padding:2px 7px; border-radius:5px 5px 0 0; white-space:nowrap; pointer-events:none; z-index:2147483646; }
+        background:rgba(18,22,30,.92); color:#cfe8ff; font:600 11px/1.5 -apple-system,"Segoe UI",system-ui,sans-serif;
+        padding:1px 6px; border-radius:5px 5px 0 0; white-space:nowrap; pointer-events:none; z-index:2147483646; opacity:.9; }
+      .mui-editing [data-mui-id]:hover::after{ opacity:1; background:rgba(18,22,30,.98); }
+      .mui-editing [data-mui-id].mui-lbl-below::after{ top:auto; bottom:0; transform:translateY(100%); border-radius:0 0 5px 5px; }
       #mui-panel [data-mui-id], #mui-list [data-mui-id]{ outline:none !important; }
       #mui-panel [data-mui-id]::after, #mui-list [data-mui-id]::after{ content:none !important; }
 
