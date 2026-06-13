@@ -70,7 +70,11 @@ In edit mode each element reacts based on where you grab it:
 - The **innermost** element always wins — an HP bar, mana bar or buff
   container is grabbed directly, not the whole frame.
 - **Buffs/debuffs:** **side edges** = width (controls wrapping: wide = many in
-  a row, narrow = stacked), **top/bottom edges** = **icon size**.
+  a row, narrow = stacked), **top/bottom edges** = **icon size**. The element
+  list has **⇄ / ⇅** buttons to flip the build direction (left/right, up/down).
+- **Inventory/Stash:** drag the grid edges to change the **column count**
+  (width) and the **icon size** (height) — icons always stay square, no
+  stretching. Move the window by its title bar.
 - **Minimap:** resizing scales the actual map (the canvas), not just a frame.
 
 ### What is individually controllable?
@@ -172,6 +176,10 @@ Im Bearbeiten-Modus reagiert jedes Element abhängig davon, wo du es packst:
   Buff-Container werden direkt angefasst, nicht der ganze Frame.
 - **Buffs/Debuffs:** **Seiten ziehen** = Breite (steuert Umbruch: breit = viele
   nebeneinander, schmal = untereinander), **oben/unten ziehen** = **Icon-Größe**.
+  In der Elemente-Liste schalten **⇄ / ⇅** die Aufbaurichtung (links/rechts, hoch/runter).
+- **Inventar/Stash:** an den Raster-Rändern ziehen ändert **Spaltenzahl** (Breite)
+  und **Icon-Größe** (Höhe) — Icons bleiben immer quadratisch, kein Strecken.
+  Das Fenster verschiebst du über die Titelleiste.
 - **Minimap:** Resize wirkt direkt auf die Karte selbst (das Canvas), nicht nur
   auf einen Rahmen.
 

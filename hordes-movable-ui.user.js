@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Hordes.io – Movable UI (Layout Editor)
 // @namespace    https://hordes.io/
-// @version      3.4.0
+// @version      3.5.0
 // @description  Jedes UI-Element einzeln verschieben & per Rand-Griff skalieren (inkl. Buff-Icon-Größe und Minimap selbst), ein-/ausblenden, Hintergründe abschalten, Layout exportieren/importieren. Im Bearbeiten-Modus werden Spiel-Tooltips/Klicks blockiert. Speichert alles, übersteht Game-Reloads.
 // @author       xmarzl
 // @match        https://hordes.io/play
@@ -63,8 +63,9 @@
     { cat: 'Gruppe', sel: '.partyframes .buffarray', multi: true, rz: true,
       id: (el, i) => 'party_buffs_' + i, name: (el, i) => 'Gruppe: Buffs #' + (i + 1) },
 
-    // ---- Menü-Buttons (oben rechts, jeder einzeln) ----
-    { cat: 'Menü-Buttons', sel: '.l-corner-ur .btnbar > div', multi: true,
+    // ---- Menü-Buttons (oben rechts, jeder einzeln; nur echte Buttons mit id,
+    //      nicht der native Hover-Tooltip ohne id) ----
+    { cat: 'Menü-Buttons', sel: '.l-corner-ur .btnbar > div[id]', multi: true,
       id: (el, i) => 'menu_' + (el.id || ('i' + i)), name: (el, i) => MENU_NAMES[el.id] || ('Button ' + (i + 1)) },
 
     // ---- Statusleiste (oben links, einzeln) ----
@@ -77,6 +78,10 @@
     { cat: 'Diverses', sel: '#minimapcontainer canvas', id: 'minimap', name: 'Minimap', rz: true },
     { cat: 'Diverses', sel: '.l-corner-ll', id: 'chat', name: 'Chat', rz: true },
     { cat: 'Diverses', sel: '#expbar', id: 'expbar', name: 'EXP-Leiste', rz: true },
+    // Inventar/Stash-Raster: Resize ändert Spaltenzahl (Breite) + quadratische Icon-Größe (Höhe)
+    { cat: 'Fenster', sel: '.slotcontainer', multi: true, rz: true,
+      id: el => { const t = el.closest('.window') && el.closest('.window').querySelector('.titleframe .title'); return 'grid_' + ((t ? t.textContent.trim() : 'x').toLowerCase()); },
+      name: el => { const t = el.closest('.window') && el.closest('.window').querySelector('.titleframe .title'); return (t ? t.textContent.trim() : 'Raster') + ': Spalten/Größe'; } },
   ];
 
   const OPTIONS = [
@@ -141,7 +146,8 @@
 
   function applySaved(el, id) {
     const c = state.items[id];
-    el.classList.remove('mui-hidden', 'mui-bs'); el.style.removeProperty('--mui-bs');
+    el.classList.remove('mui-hidden', 'mui-bs', 'dir-rtl', 'dir-up');
+    el.style.removeProperty('--mui-bs'); el.style.removeProperty('--inv-cols'); el.style.removeProperty('--inv-cell');
     if (!c) { el.style.left = el.style.top = el.style.width = el.style.height = ''; return; }
     if (c.l != null || c.t != null || c.w != null || c.h != null) ensurePositioned(el);
     el.style.left = c.l != null ? c.l + 'px' : '';
@@ -149,6 +155,10 @@
     el.style.width = c.w != null ? c.w + 'px' : '';
     el.style.height = c.h != null ? c.h + 'px' : '';
     if (c.bs != null) { el.style.setProperty('--mui-bs', c.bs + 'px'); el.classList.add('mui-bs'); }
+    if (c.cols != null) el.style.setProperty('--inv-cols', c.cols);
+    if (c.cell != null) el.style.setProperty('--inv-cell', c.cell + 'px');
+    if (c.dirx === 'rtl') el.classList.add('dir-rtl');
+    if (c.diry === 'up') el.classList.add('dir-up');
     if (c.hidden) el.classList.add('mui-hidden');
   }
   function applyOptions() {
@@ -158,8 +168,11 @@
 
   // Prozent-Anzeige in HP/MP-Leisten (eigene Span, aus Balkenbreite gespeist)
   function setupPctBars() {
-    document.querySelectorAll('.progressBar.bghealth:not(.hpdelta):not(.simpleui-pct-initd), .progressBar.bgmana:not(.simpleui-pct-initd)').forEach(pb => {
-      pb.classList.add('simpleui-pct-initd');
+    // HP = bghealth (Freund/Selbst) ODER bgenemy (Gegner); MP = bgmana.
+    // Marker via vorhandenes Kind statt Klasse, da Svelte die Klasse beim
+    // Wechsel Freund<->Gegner überschreibt.
+    document.querySelectorAll('.progressBar.bghealth:not(.hpdelta), .progressBar.bgenemy:not(.hpdelta), .progressBar.bgmana:not(.bgspell)').forEach(pb => {
+      if (pb.querySelector(':scope > .simpleui-pct')) return;
       const span = document.createElement('span'); span.className = 'simpleui-pct';
       pb.appendChild(span);
       const upd = () => { const w = parseFloat(pb.style.width); span.textContent = (isNaN(w) ? 0 : Math.round(w)) + '%'; };
@@ -168,15 +181,26 @@
     });
   }
 
-  // Namens-Labels im Editor: nahe oberem Bildschirmrand nach unten klappen
-  function updateLabelDirs() {
-    if (!editMode) return;
+  // Namens-Labels im Editor: eigene Overlay-Schicht, an jeder Element-Position
+  function renderLabels() {
+    const layer = document.getElementById('mui-labels'); if (!layer) return;
+    if (!editMode) { layer.replaceChildren(); return; }
+    const frag = document.createDocumentFragment();
     document.querySelectorAll('[data-mui-id]').forEach(el => {
       if (el.closest('#mui-panel') || el.closest('#mui-list')) return;
       const r = el.getBoundingClientRect();
-      el.classList.toggle('mui-lbl-below', r.top < 40);
+      if (r.width < 2 && r.height < 2) return;
+      const lab = document.createElement('div'); lab.className = 'mui-label'; lab.textContent = el.dataset.muiName || '';
+      const below = r.top < 26;
+      lab.style.left = Math.max(0, r.left) + 'px';
+      lab.style.top = (below ? r.bottom : r.top) + 'px';
+      if (!below) lab.classList.add('mui-label-up');
+      frag.appendChild(lab);
     });
+    layer.replaceChildren(frag);
   }
+  let _lblQ = false;
+  function scheduleLabels() { if (_lblQ) return; _lblQ = true; requestAnimationFrame(() => { _lblQ = false; renderLabels(); }); }
   function reapplyAll() { document.querySelectorAll('[data-mui-id]').forEach(el => applySaved(el, el.dataset.muiId)); }
 
   /* =========================================================================
@@ -205,11 +229,12 @@
       document.querySelectorAll('.window').forEach(el => {
         const t = el.querySelector('.titleframe .title') || el.querySelector('[name="title"]');
         const title = (t ? t.textContent.trim() : '') || 'Fenster';
-        register(el, 'win:' + title, title, 'Fenster', true);
+        register(el, 'win:' + title, title, 'Fenster', !/^(inventory|stash)$/i.test(title));
       });
       setupPctBars();
       injectSettingsTab();
       if (state.options.splitbuffs) document.querySelectorAll('.buffarray[data-mui-id]:not(.mui-splitsource)').forEach(setupSplit);
+      if (editMode) scheduleLabels();
     } catch (err) { /* nie den Tab blockieren */ }
     finally { if (layoutObserver) { const lay = document.querySelector('.layout'); if (lay) layoutObserver.observe(lay, { childList: true, subtree: true }); } }
   }
@@ -244,14 +269,19 @@
     const cs = getComputedStyle(host);
     const zone = host.dataset.muiResizable ? resizeZone(host, e) : null;
     const slot = host.querySelector('.slot');
+    const isInv = host.classList.contains('slotcontainer');
     drag = {
       host, id: host.dataset.muiId, mode: zone || 'move', scale: ancestorScale(host),
       isBuff: host.classList.contains('buffarray') || host.classList.contains('mui-bcont'),
+      isInv,
       sx: e.clientX, sy: e.clientY,
       bl: parseFloat(cs.left) || 0, bt: parseFloat(cs.top) || 0,
       bw: host.offsetWidth, bh: host.offsetHeight,
       bbs: (slot ? slot.offsetWidth : 0) || 28,
+      bcols: parseInt(host.style.getPropertyValue('--inv-cols')) || (c0().cols) || 5,
+      bcell: parseInt(host.style.getPropertyValue('--inv-cell')) || (c0().cell) || 46,
     };
+    function c0() { return state.items[host.dataset.muiId] || {}; }
     try { host.setPointerCapture(e.pointerId); } catch (err) {}
     host.classList.add('mui-dragging');
   }
@@ -261,12 +291,28 @@
     const dx = (e.clientX - d.sx) / s, dy = (e.clientY - d.sy) / s;
     const c = cfgOf(d.id);
     if (d.mode === 'move') {
+      if (d.isInv) return;   // Raster nur per Rand skalieren, nicht im Fenster verschieben
       const l = Math.round(d.bl + dx), t = Math.round(d.bt + dy);
       d.host.style.left = l + 'px'; d.host.style.top = t + 'px'; c.l = l; c.t = t;
-      saveSoon(); return;
+      saveSoon(); scheduleLabels(); return;
     }
     const horiz = d.mode.includes('e') || d.mode.includes('w');
     const vert = d.mode.includes('n') || d.mode.includes('s');
+
+    if (d.isInv) {
+      // Inventar: Breite -> Spaltenzahl, Höhe -> quadratische Icon-Größe (kein Strecken)
+      if (horiz) {
+        const w = Math.max(d.bcell, d.bw + (d.mode.includes('w') ? -dx : dx));
+        const cols = Math.max(1, Math.min(20, Math.round(w / d.bcell)));
+        c.cols = cols; d.host.style.setProperty('--inv-cols', cols);
+      }
+      if (vert) {
+        const vd = (d.mode.includes('s') ? dy : 0) + (d.mode.includes('n') ? -dy : 0);
+        const cell = Math.max(24, Math.min(80, Math.round(d.bcell + vd)));
+        c.cell = cell; d.host.style.setProperty('--inv-cell', cell + 'px');
+      }
+      saveSoon(); scheduleLabels(); return;
+    }
 
     if (horiz) {
       let w = d.bw, l = d.bl;
@@ -289,7 +335,7 @@
         if (d.mode.includes('n')) { d.host.style.top = Math.round(t) + 'px'; c.t = Math.round(t); }
       }
     }
-    saveSoon();
+    saveSoon(); scheduleLabels();
   }
 
   function onPointerMove(e) {
@@ -304,7 +350,7 @@
     host.style.cursor = zone ? CURSOR[zone] : 'move';
     hoverHost = host;
   }
-  function onPointerUp(e) { if (editMode) e.stopPropagation(); if (!drag) return; drag.host.classList.remove('mui-dragging'); drag = null; updateLabelDirs(); }
+  function onPointerUp(e) { if (editMode) e.stopPropagation(); if (!drag) return; drag.host.classList.remove('mui-dragging'); drag = null; scheduleLabels(); }
 
   // Blockt alle übrigen Spiel-Events im Bearbeiten-Modus (Tooltips, Klicks, Zoom)
   function swallow(e) {
@@ -416,6 +462,14 @@
     else [...splitObservers.keys()].forEach(teardownSplit);
     saveSoon(); if (listOpen) renderList();
   }
+  // Aufbaurichtung eines Buff/Debuff-Containers umschalten (x = links/rechts, y = hoch/runter)
+  function setDir(id, axis) {
+    const c = cfgOf(id);
+    if (axis === 'x') { if (c.dirx === 'rtl') delete c.dirx; else c.dirx = 'rtl'; }
+    else { if (c.diry === 'up') delete c.diry; else c.diry = 'up'; }
+    const el = elOf(id); if (el) applySaved(el, id);
+    saveSoon(); if (listOpen) renderList();
+  }
 
   /* =========================================================================
    *  SETTINGS-INTEGRATION: eigener Reiter „Movable UI" im Spiel-Settings-Fenster
@@ -438,15 +492,17 @@
     const pane = document.createElement('div'); pane.className = 'menu panel-black scrollbar simpleui-pane'; pane.style.display = 'none';
     const h = document.createElement('h3'); h.className = 'textprimary'; h.textContent = 'Movable UI'; pane.appendChild(h);
     const actions = document.createElement('div'); actions.className = 'simpleui-actions';
-    actions.appendChild(suiBtn('✏️ Bearbeiten-Modus (F8)', () => {
+    actions.appendChild(suiBtn('Bearbeiten-Modus (F8)', () => {
       const win = pane.closest('.window'); const x = win && win.querySelector('.titleframe img[src*="cross"]');
       if (x) x.click();
       setEditMode(true);
     }));
-    actions.appendChild(suiBtn('☰ Elemente-Liste', () => { setListOpen(!listOpen); }));
-    actions.appendChild(suiBtn('⤓ Export', exportLayout));
-    actions.appendChild(suiBtn('⤒ Import', importLayout));
-    actions.appendChild(suiBtn('↺ Reset', resetAll));
+    actions.appendChild(suiBtn('Elemente-Liste', () => { setListOpen(!listOpen); }));
+    const io = document.createElement('div'); io.className = 'simpleui-io';
+    io.appendChild(suiBtn('Export', exportLayout));
+    io.appendChild(suiBtn('Import', importLayout));
+    actions.appendChild(io);
+    actions.appendChild(suiBtn('Reset', resetAll));
     pane.appendChild(actions);
     const grid = document.createElement('div'); grid.className = 'settings simpleui-grid';
     suiHead(grid, 'Hintergründe');
@@ -491,8 +547,7 @@
     const p = document.getElementById('mui-panel'); if (p) p.classList.toggle('mui-open', on);
     const t = document.getElementById('mui-toggle'); if (t) t.textContent = on ? '✓ Fertig' : '⛶ Layout';
     if (hoverHost) { hoverHost.style.cursor = ''; hoverHost = null; }
-    if (on) updateLabelDirs();
-    if (!on) setListOpen(false);
+    if (on) scheduleLabels(); else { setListOpen(false); renderLabels(); }
   }
   function setListOpen(on) {
     listOpen = on;
@@ -526,8 +581,12 @@
       html += '<div class="mui-cat">' + cat + '</div>';
       byCat.get(cat).forEach(([id, entry]) => {
         const hidden = !!cfgOf(id).hidden;
-        html += '<div class="mui-row' + (hidden ? ' mui-row-hidden' : '') + '" data-id="' + String(id).replace(/"/g, '&quot;') + '">'
-          + '<span class="mui-row-name">' + entry.name + '</span>'
+        const isBuff = entry.el.classList && (entry.el.classList.contains('mui-bcont') || entry.el.classList.contains('buffarray'));
+        const dirBtns = isBuff
+          ? '<button class="mui-dir" data-dir="x" title="Aufbau links/rechts">⇄</button><button class="mui-dir" data-dir="y" title="Aufbau hoch/runter">⇅</button>'
+          : '';
+        html += '<div class="mui-row' + (hidden ? ' mui-row-hidden' : '') + (isBuff ? ' mui-row-buff' : '') + '" data-id="' + String(id).replace(/"/g, '&quot;') + '">'
+          + '<span class="mui-row-name">' + entry.name + '</span>' + dirBtns
           + '<button class="mui-eye" title="Ein-/Ausblenden">' + (hidden ? '🚫' : '👁') + '</button>'
           + '<button class="mui-reset-one" title="Zurücksetzen">⟲</button></div>';
       });
@@ -538,6 +597,8 @@
   function buildPanel() {
     if (document.getElementById('mui-panel')) return;
 
+    if (!document.getElementById('mui-labels')) { const lay = document.createElement('div'); lay.id = 'mui-labels'; document.body.appendChild(lay); }
+
     const list = document.createElement('div');
     list.id = 'mui-list';
     list.addEventListener('click', e => {
@@ -546,6 +607,8 @@
       const opt = e.target.closest('.mui-optrow'); if (opt) { toggleOption(opt.dataset.opt); return; }
       const row = e.target.closest('.mui-row'); if (!row) return;
       const id = row.dataset.id; if (!id) return;
+      const dirb = e.target.closest('.mui-dir');
+      if (dirb) { setDir(id, dirb.dataset.dir); return; }
       if (e.target.closest('.mui-eye')) setHidden(id, !cfgOf(id).hidden);
       else if (e.target.closest('.mui-reset-one')) resetOne(id);
       else flash(id);
@@ -594,16 +657,25 @@
       .mui-bcont.mui-bs .slot img{ width:100% !important; height:100% !important; }
       .mui-splitsource{ position:absolute !important; width:1px !important; height:1px !important; overflow:hidden !important; opacity:0 !important; pointer-events:none !important; }
 
-      /* HP/MP-Text-Optionen */
-      .simpleui-hp-noname  .progressBar.bghealth > .left{ display:none !important; }
-      .simpleui-hp-nonum   .progressBar.bghealth > .right{ display:none !important; }
+      /* HP/MP-Text-Optionen (HP = bghealth ODER bgenemy) */
+      .simpleui-hp-noname  .progressBar.bghealth > .left,  .simpleui-hp-noname  .progressBar.bgenemy > .left{ display:none !important; }
+      .simpleui-hp-nonum   .progressBar.bghealth > .right, .simpleui-hp-nonum   .progressBar.bgenemy > .right{ display:none !important; }
       .simpleui-mp-nolevel .progressBar.bgmana > .left{ display:none !important; }
       .simpleui-mp-nonum   .progressBar.bgmana > .right{ display:none !important; }
       .simpleui-pct{ position:absolute; right:7px; z-index:1; display:none; }
-      .simpleui-hp-pct .progressBar.bghealth > .right{ display:none !important; }
-      .simpleui-hp-pct .progressBar.bghealth > .simpleui-pct{ display:inline !important; }
+      .simpleui-hp-pct .progressBar.bghealth > .right, .simpleui-hp-pct .progressBar.bgenemy > .right{ display:none !important; }
+      .simpleui-hp-pct .progressBar.bghealth > .simpleui-pct, .simpleui-hp-pct .progressBar.bgenemy > .simpleui-pct{ display:inline !important; }
       .simpleui-mp-pct .progressBar.bgmana > .right{ display:none !important; }
       .simpleui-mp-pct .progressBar.bgmana > .simpleui-pct{ display:inline !important; }
+
+      /* Inventar/Stash: feste quadratische Zellen + steuerbare Spalten/Größe (kein Strecken) */
+      .slotcontainer{ width:max-content !important; grid-template-columns:repeat(var(--inv-cols,5), var(--inv-cell,46px)) !important; justify-content:start !important; }
+      .slotcontainer > .slot{ width:var(--inv-cell,46px) !important; height:var(--inv-cell,46px) !important; min-width:0 !important; min-height:0 !important; }
+      .slotcontainer > .slot img.icon{ width:100% !important; height:100% !important; object-fit:contain; }
+
+      /* Buff/Debuff-Aufbaurichtung */
+      .buffarray[data-mui-id].dir-rtl > .container, .mui-bcont.dir-rtl{ flex-direction:row-reverse; }
+      .buffarray[data-mui-id].dir-up > .container,  .mui-bcont.dir-up{ flex-wrap:wrap-reverse; }
 
       /* Panel nur im Bearbeiten-Modus sichtbar */
       body:not(.mui-editing) #mui-panel{ display:none !important; }
@@ -611,8 +683,10 @@
       /* Settings-Reiter „Movable UI" */
       .simpleui-choice{ cursor:pointer; }
       .simpleui-pane h3{ margin-top:0; }
-      .simpleui-actions{ display:flex; flex-wrap:wrap; gap:6px; margin-bottom:10px; }
-      .simpleui-actions .simpleui-btn{ cursor:pointer; }
+      .simpleui-actions{ display:flex; flex-direction:column; gap:5px; margin-bottom:10px; }
+      .simpleui-actions .simpleui-btn{ font-size:12px; padding:5px 9px; text-align:center; cursor:pointer; }
+      .simpleui-io{ display:flex; gap:5px; }
+      .simpleui-io .simpleui-btn{ flex:1; }
       .simpleui-grid{ display:grid; grid-template-columns:2fr 1fr; gap:6px 10px; align-items:center; }
       .simpleui-grid .textprimary{ margin-top:8px; }
       .simpleui-grid .btn.checkbox{ justify-self:start; }
@@ -623,14 +697,13 @@
       .mui-editing [data-mui-resizable]{ outline-color:rgba(150,255,210,.6); }
       .mui-editing [data-mui-id]:hover{ outline-width:2px; outline-style:solid; }
       .mui-editing [data-mui-id].mui-dragging{ outline:2px solid rgba(255,210,120,.95); }
-      .mui-editing [data-mui-id]::after{
-        content:attr(data-mui-name); position:absolute; top:0; left:0; transform:translateY(-100%);
-        background:rgba(18,22,30,.92); color:#cfe8ff; font:600 11px/1.5 -apple-system,"Segoe UI",system-ui,sans-serif;
-        padding:1px 6px; border-radius:5px 5px 0 0; white-space:nowrap; pointer-events:none; z-index:2147483646; opacity:.9; }
-      .mui-editing [data-mui-id]:hover::after{ opacity:1; background:rgba(18,22,30,.98); }
-      .mui-editing [data-mui-id].mui-lbl-below::after{ top:auto; bottom:0; transform:translateY(100%); border-radius:0 0 5px 5px; }
       #mui-panel [data-mui-id], #mui-list [data-mui-id]{ outline:none !important; }
-      #mui-panel [data-mui-id]::after, #mui-list [data-mui-id]::after{ content:none !important; }
+      /* Namens-Labels als eigene, nicht abschneidbare Overlay-Schicht */
+      #mui-labels{ position:fixed; inset:0; pointer-events:none; z-index:2147483646; }
+      .mui-label{ position:fixed; background:rgba(18,22,30,.92); color:#cfe8ff;
+        font:600 10px/1.4 -apple-system,system-ui,sans-serif; padding:1px 5px; border-radius:4px;
+        white-space:nowrap; pointer-events:none; box-shadow:0 1px 3px rgba(0,0,0,.5); }
+      .mui-label.mui-label-up{ transform:translateY(-100%); }
 
       @keyframes muiFlash{ 0%,100%{ outline-color:rgba(255,220,120,0);} 50%{ outline-color:rgba(255,220,120,1);} }
       .mui-flash{ outline:3px solid rgba(255,220,120,1) !important; outline-offset:2px; animation:muiFlash .55s ease-in-out 2; }
@@ -665,6 +738,7 @@
       .mui-cat{ font-size:11px; text-transform:uppercase; letter-spacing:.5px; color:#7fa7d6; font-weight:700; margin:10px 4px 3px; }
       .mui-row{ display:grid; grid-template-columns:1fr auto auto; align-items:center; gap:4px; padding:3px 4px; border-radius:7px; }
       .mui-optrow{ grid-template-columns:1fr auto; }
+      .mui-row-buff{ grid-template-columns:1fr auto auto auto auto; }
       .mui-row:hover{ background:rgba(120,160,200,.14); }
       .mui-row-name{ cursor:pointer; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
       .mui-row-name:hover{ color:#ffe07a; }
