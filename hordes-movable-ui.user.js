@@ -3,7 +3,7 @@
 // @namespace    https://hordes.io/
 // @version      3.2.0
 // @description  Jedes UI-Element einzeln verschieben & per Rand-Griff skalieren (inkl. Buff-Icon-Größe und Minimap selbst), ein-/ausblenden, Hintergründe abschalten, Layout exportieren/importieren. Im Bearbeiten-Modus werden Spiel-Tooltips/Klicks blockiert. Speichert alles, übersteht Game-Reloads.
-// @author       du
+// @author       xmarzl
 // @match        https://hordes.io/play
 // @run-at       document-idle
 // @grant        none
