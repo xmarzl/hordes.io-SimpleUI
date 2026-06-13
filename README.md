@@ -18,31 +18,38 @@ Unten rechts erscheint der **⛶ Layout**-Button.
 | Aktion | Wie |
 |---|---|
 | Bearbeiten-Modus an/aus | Button **⛶ Layout** oder Taste **`F8`** |
-| Element verschieben | Im Bearbeiten-Modus ziehen (innerstes Element gewinnt) |
-| Größe ändern | Im Bearbeiten-Modus **Mausrad** über dem Element |
-| Element-Liste | Button **☰ Elemente** (ein-/ausblenden, finden, einzeln reset) |
+| Element verschieben | Im Bearbeiten-Modus die **Mitte** ziehen (innerstes Element gewinnt) |
+| Größe ändern | Im Bearbeiten-Modus an **Rand/Ecke** ziehen (Resize-Cursor) |
+| Element-Liste & Optionen | Button **☰ Elemente** |
 | Ein-/Ausblenden | In der Liste auf **👁 / 🚫** |
 | Element finden | In der Liste auf den **Namen** (Element blinkt kurz) |
 | Einzeln zurücksetzen | In der Liste auf **⟲** |
 | Alles zurücksetzen | Bearbeiten-Modus → **Zurücksetzen** |
 
+In der Liste gibt es oben eine Sektion **Optionen**, um störende Hintergründe
+abzuschalten: Skill-Leisten-Hintergrund, Skill-Slot-Rahmen, HP/Mana-Rahmen.
+So lassen sich die Einzelteile frei und ohne Container-Kästen anordnen.
+
 Speichern passiert automatisch (localStorage) und übersteht die automatischen
 Game-Reloads. Außerhalb des Bearbeiten-Modus verhält sich das Spiel komplett
 normal – Skill-Klicks, Inventar-Drag usw. werden nicht gestört.
 
-### Ganzer Frame vs. Einzelteil
+### Verschieben vs. Größe
 
-Beim Ziehen gewinnt immer das **innerste** registrierte Element:
-- **HP-Leiste** / **Mana-Wut-Energie-Leiste** / **Buffs** packst du direkt an.
-- Den **ganzen Spieler-/Ziel-Frame** greifst du am **Klassen-Icon** (dort liegt
-  kein Einzelteil drüber).
+Im Bearbeiten-Modus reagiert jedes Element abhängig davon, wo du es packst:
+- **Mitte ziehen** → verschieben.
+- **Rand/Ecke ziehen** → Größe ändern (es erscheint der passende Resize-Cursor).
+- Es gewinnt immer das **innerste** Element – HP-Leiste, Mana-Leiste oder ein
+  Buff-Container werden direkt angefasst, nicht der ganze Frame.
+- **Buffs/Debuffs:** Breite/Höhe des Containers steuert, wie sie umbrechen
+  (breit = viele nebeneinander, schmal = untereinander).
 
 ## Was ist einzeln steuerbar?
 
-- **Skills:** jeder Slot einzeln (+ ganze Leiste)
-- **Spieler:** Lebensleiste, Mana/Wut/Energie, Buffs/Debuffs, ganzer Frame
-- **Ziel:** Lebensleiste, Mana/Wut/Energie, Buffs/Debuffs, ganzer Frame
-- **Gruppe:** pro Mitglied Leben, Mana, Buffs (+ ganze Gruppen-Frames)
+- **Skills:** jeder Slot einzeln
+- **Spieler:** Lebensleiste, Mana/Wut/Energie, Buffs/Debuffs, Klassen-Icon, Fraktions-Icon
+- **Ziel:** Lebensleiste, Mana/Wut/Energie, Buffs/Debuffs, Klassen-Icon, Fraktions-Icon
+- **Gruppe:** pro Mitglied Leben, Mana, Buffs
 - **Menü-Buttons:** jeder Button oben rechts einzeln (Shop, Charakter, Inventar …)
 - **Statusleiste:** Party-Button, Party-Status, **EXP/h**, **Gold/h** getrennt
 - **Diverses:** Chat, Minimap, EXP-Leiste, jedes offene Fenster
@@ -61,13 +68,11 @@ Hordes-IDs/Strukturklassen werden genutzt (`#skillbar`, `#ufplayer`, `#uftarget`
 
 - **Verschieben:** `position:relative` + `left/top`; Maus-Delta wird durch die
   effektive UI-Skala der Vorfahren geteilt → folgt 1:1 der Maus.
-- **Größe:** CSS `zoom` (kollidiert nicht mit Hordes’ `transform`-UI-Skala).
+- **Größe:** Rand-/Eck-Zonen am Element starten ein Resize statt eines Moves
+  und setzen `width`/`height` (bei Buff-Containern via `flex-wrap` → Umbruch).
+- **Hintergründe aus:** Body-Klassen (`mui-opt-*`) blenden Skill-Leiste,
+  Slot-Rahmen und HP/Mana-Rahmen aus, ohne die Inhalte zu entfernen.
 - **Ein-/Ausblenden:** Klasse `mui-hidden` (`display:none`), Verwaltung über die
   Element-Liste, da ausgeblendete Teile im Spiel verschwinden.
-- **Robust:** `MutationObserver` auf `.layout` re-initialisiert nach Reloads;
-  alles idempotent (`data-mui-*`-Marker).
-
-## Verwandt
-
-Volles Mod-Framework mit 30+ Mods: <https://github.com/hordesmod/kek-ui>
-(dieses Script ist bewusst nur der schlanke „alles verschiebbar/ausblendbar"-Kern).
+- **Robust:** `MutationObserver` auf `.layout` (gedrosselt, selbst-abgekoppelt)
+  re-initialisiert nach Reloads; alles idempotent (`data-mui-*`-Marker).
