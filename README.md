@@ -42,9 +42,10 @@ tooltips, window-opening clicks, camera) so you can arrange things precisely.
 (`visibility`), so hiding e.g. skill slot 5 won't push slots 6/7 — shared
 layouts stay intact. In edit mode hidden parts show as dimmed ghosts.
 
-The **Options** section (top of the list) removes distracting backgrounds:
-skill-bar background, skill-slot frames, HP/Mana frame — so the individual
-parts float freely without container boxes.
+The **Options** section (top of the list) removes distracting backgrounds
+(skill-bar background, skill-slot frames, HP/Mana frame) and can **split
+buffs and debuffs** into two separate, freely placeable containers — so the
+individual parts float freely without container boxes.
 
 ### Save / transfer your layout (export / import)
 
@@ -139,7 +140,8 @@ Im Bearbeiten-Modus blockiert das Script die normalen Spiel-Eingaben
 geteilte Layouts bleiben heil. Im Bearbeiten-Modus erscheinen sie als Geister.
 
 In der Liste gibt es oben eine Sektion **Optionen**, um störende Hintergründe
-abzuschalten: Skill-Leisten-Hintergrund, Skill-Slot-Rahmen, HP/Mana-Rahmen.
+abzuschalten (Skill-Leisten-Hintergrund, Skill-Slot-Rahmen, HP/Mana-Rahmen)
+und **Buffs & Debuffs zu trennen** (zwei getrennt platzierbare Container).
 So lassen sich die Einzelteile frei und ohne Container-Kästen anordnen.
 
 ### Layout sichern / übertragen (Export/Import)

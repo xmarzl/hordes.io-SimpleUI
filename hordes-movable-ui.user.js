@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Hordes.io – Movable UI (Layout Editor)
 // @namespace    https://hordes.io/
-// @version      3.2.0
+// @version      3.3.0
 // @description  Jedes UI-Element einzeln verschieben & per Rand-Griff skalieren (inkl. Buff-Icon-Größe und Minimap selbst), ein-/ausblenden, Hintergründe abschalten, Layout exportieren/importieren. Im Bearbeiten-Modus werden Spiel-Tooltips/Klicks blockiert. Speichert alles, übersteht Game-Reloads.
 // @author       xmarzl
 // @match        https://hordes.io/play
@@ -85,7 +85,7 @@
     { key: 'nobarframe', cls: 'mui-opt-nobarframe', name: 'HP/Mana: Rahmen ausblenden' },
   ];
 
-  const CAT_ORDER = ['Skills', 'Spieler', 'Ziel', 'Gruppe', 'Menü-Buttons', 'Statusleiste', 'Diverses', 'Fenster'];
+  const CAT_ORDER = ['Skills', 'Spieler', 'Ziel', 'Gruppe', 'Buffs/Debuffs', 'Menü-Buttons', 'Statusleiste', 'Diverses', 'Fenster'];
   const CURSOR = { e: 'ew-resize', w: 'ew-resize', n: 'ns-resize', s: 'ns-resize', ne: 'nesw-resize', sw: 'nesw-resize', nw: 'nwse-resize', se: 'nwse-resize' };
   // Spiel-Events, die im Bearbeiten-Modus blockiert werden (Tooltips, Fenster öffnen, Kamera)
   const BLOCK_EVENTS = ['click', 'dblclick', 'mousedown', 'mouseup', 'mouseover', 'mouseout', 'mouseenter', 'mouseleave', 'pointerover', 'pointerout', 'pointerenter', 'pointerleave', 'contextmenu', 'wheel'];
@@ -98,6 +98,7 @@
    * ========================================================================= */
   let state = loadState();                 // { items:{id:{l,t,w,h,bs,hidden}}, options:{} }
   const registry = new Map();              // id -> { el, name, cat }
+  const splitObservers = new Map();        // baseBuffId -> { obs, pos, neg }
   let editMode = false, listOpen = false, hashImported = false;
   let drag = null, hoverHost = null, layoutObserver = null, saveTimer = null;
 
@@ -171,6 +172,7 @@
         const t = el.querySelector('[name="title"]'); const title = (t ? t.textContent.trim() : '') || 'Fenster';
         register(el, 'win:' + title, title, 'Fenster', true);
       });
+      if (state.options.splitbuffs) document.querySelectorAll('.buffarray[data-mui-id]:not(.mui-splitsource)').forEach(setupSplit);
     } catch (err) { /* nie den Tab blockieren */ }
     finally { if (layoutObserver) { const lay = document.querySelector('.layout'); if (lay) layoutObserver.observe(lay, { childList: true, subtree: true }); } }
   }
@@ -207,7 +209,7 @@
     const slot = host.querySelector('.slot');
     drag = {
       host, id: host.dataset.muiId, mode: zone || 'move', scale: ancestorScale(host),
-      isBuff: host.classList.contains('buffarray'),
+      isBuff: host.classList.contains('buffarray') || host.classList.contains('mui-bcont'),
       sx: e.clientX, sy: e.clientY,
       bl: parseFloat(cs.left) || 0, bt: parseFloat(cs.top) || 0,
       bw: host.offsetWidth, bh: host.offsetHeight,
@@ -328,6 +330,57 @@
   }
 
   /* =========================================================================
+   *  BUFF/DEBUFF-TRENNUNG (Klon-basiert, Svelte-sicher, opt-in)
+   *  Wir fassen Sveltes Buff-Slots NICHT an, sondern spiegeln sie in zwei
+   *  eigene Container (.mui-bcont): positive -> Buffs, negative -> Debuffs.
+   * ========================================================================= */
+  function buffPrefix(id) {
+    return id.indexOf('player') === 0 ? 'Spieler' : id.indexOf('target') === 0 ? 'Ziel' : id.indexOf('party') === 0 ? 'Gruppe' : 'Buffs';
+  }
+  function cloneInto(baseEl, pos, neg) {
+    try {
+      const slots = baseEl.querySelectorAll('.slot');
+      const fp = document.createDocumentFragment(), fn = document.createDocumentFragment();
+      slots.forEach(s => { const c = s.cloneNode(true); c.removeAttribute('id'); (s.classList.contains('negative') ? fn : fp).appendChild(c); });
+      pos.replaceChildren(fp); neg.replaceChildren(fn);
+    } catch (e) {}
+  }
+  function setupSplit(baseEl) {
+    if (!baseEl || baseEl.dataset.muiSplit) return;
+    const baseId = baseEl.dataset.muiId; if (!baseId) return;
+    const old = splitObservers.get(baseId);
+    if (old) { try { old.obs.disconnect(); } catch (e) {} old.pos.remove(); old.neg.remove(); }
+    baseEl.dataset.muiSplit = '1'; baseEl.classList.add('mui-splitsource');
+    const prefix = buffPrefix(baseId);
+    const pos = document.createElement('div'); pos.className = 'mui-bcont';
+    const neg = document.createElement('div'); neg.className = 'mui-bcont';
+    const parent = baseEl.parentElement || document.querySelector('.layout');
+    parent.appendChild(pos); parent.appendChild(neg);
+    register(pos, baseId + '__pos', prefix + ': Buffs', 'Buffs/Debuffs', true);
+    register(neg, baseId + '__neg', prefix + ': Debuffs', 'Buffs/Debuffs', true);
+    const doClone = debounce(() => cloneInto(baseEl, pos, neg), 120);
+    const obs = new MutationObserver(doClone);
+    obs.observe(baseEl, { childList: true, subtree: true });
+    splitObservers.set(baseId, { obs, pos, neg });
+    cloneInto(baseEl, pos, neg);
+  }
+  function teardownSplit(baseId) {
+    const rec = splitObservers.get(baseId); if (!rec) return;
+    try { rec.obs.disconnect(); } catch (e) {}
+    rec.pos.remove(); rec.neg.remove();
+    registry.delete(baseId + '__pos'); registry.delete(baseId + '__neg');
+    const base = elOf(baseId);
+    if (base) { base.classList.remove('mui-splitsource'); delete base.dataset.muiSplit; applySaved(base, baseId); }
+    splitObservers.delete(baseId);
+  }
+  function setSplitBuffs(on) {
+    state.options.splitbuffs = on;
+    if (on) document.querySelectorAll('.buffarray[data-mui-id]:not(.mui-splitsource)').forEach(setupSplit);
+    else [...splitObservers.keys()].forEach(teardownSplit);
+    saveSoon(); if (listOpen) renderList();
+  }
+
+  /* =========================================================================
    *  PANEL & LISTE
    * ========================================================================= */
   function setEditMode(on) {
@@ -356,10 +409,13 @@
       const on = !!state.options[o.key];
       html += '<div class="mui-row mui-optrow" data-opt="' + o.key + '"><span class="mui-row-name">' + o.name + '</span><button class="mui-opt' + (on ? ' mui-on' : '') + '">' + (on ? '✓' : '✗') + '</button></div>';
     });
+    const sb = !!state.options.splitbuffs;
+    html += '<div class="mui-row mui-optrow" data-split="1"><span class="mui-row-name">Buffs &amp; Debuffs trennen</span><button class="mui-opt' + (sb ? ' mui-on' : '') + '">' + (sb ? '✓' : '✗') + '</button></div>';
 
     const byCat = new Map();
     registry.forEach((entry, id) => {
       if (!document.body.contains(entry.el)) return;
+      if (entry.el.classList && entry.el.classList.contains('mui-splitsource')) return;
       const a = byCat.get(entry.cat) || []; a.push([id, entry]); byCat.set(entry.cat, a);
     });
     const cats = CAT_ORDER.filter(c => byCat.has(c)).concat([...byCat.keys()].filter(c => !CAT_ORDER.includes(c)));
@@ -383,6 +439,7 @@
     list.id = 'mui-list';
     list.addEventListener('click', e => {
       const act = e.target.closest('.mui-act'); if (act) { act.dataset.act === 'export' ? exportLayout() : importLayout(); return; }
+      if (e.target.closest('[data-split]')) { setSplitBuffs(!state.options.splitbuffs); return; }
       const opt = e.target.closest('.mui-optrow'); if (opt) { toggleOption(opt.dataset.opt); return; }
       const row = e.target.closest('.mui-row'); if (!row) return;
       const id = row.dataset.id; if (!id) return;
@@ -420,12 +477,19 @@
       .mui-opt-noslotbg #skillbar > .slot{ background:transparent !important; border-color:transparent !important; box-shadow:none !important; }
       .mui-opt-nobarframe .barsInner{ background:transparent !important; border-color:transparent !important; box-shadow:none !important; }
 
-      /* Buffs: umbrechbar + eigene Icon-Größe */
-      .buffarray[data-mui-id]{ flex-wrap:wrap; align-content:flex-start; }
+      /* Buffs: umbrechbar (Slots liegen unter .container) + eigene Icon-Größe */
+      .buffarray[data-mui-id] > .container{ display:flex !important; flex-wrap:wrap !important; align-content:flex-start; width:100%; }
       .mui-editing .buffarray[data-mui-id]{ min-width:20px; min-height:20px; }
-      .buffarray[data-mui-id].mui-bs > .slot{ width:var(--mui-bs) !important; height:var(--mui-bs) !important; min-width:0 !important; min-height:0 !important; }
-      .buffarray[data-mui-id].mui-bs > .slot img,
-      .buffarray[data-mui-id].mui-bs > .slot .icon{ width:100% !important; height:100% !important; }
+      .buffarray[data-mui-id].mui-bs .slot{ width:var(--mui-bs) !important; height:var(--mui-bs) !important; min-width:0 !important; min-height:0 !important; }
+      .buffarray[data-mui-id].mui-bs .slot img{ width:100% !important; height:100% !important; max-width:none !important; }
+
+      /* Geteilte Buff/Debuff-Container (Klone, Svelte-sicher) */
+      .mui-bcont{ position:relative; display:flex; flex-wrap:wrap; align-content:flex-start; gap:1px; }
+      .mui-editing .mui-bcont{ min-width:24px; min-height:24px; }
+      .mui-bcont.mui-bs .slot{ width:var(--mui-bs) !important; height:var(--mui-bs) !important; min-width:0 !important; min-height:0 !important; }
+      .mui-bcont .slot img{ max-width:none !important; }
+      .mui-bcont.mui-bs .slot img{ width:100% !important; height:100% !important; }
+      .mui-splitsource{ position:absolute !important; width:1px !important; height:1px !important; overflow:hidden !important; opacity:0 !important; pointer-events:none !important; }
 
       /* Bearbeiten-Modus */
       .mui-editing .slotdescription{ display:none !important; }   /* Spiel-Tooltips aus */
