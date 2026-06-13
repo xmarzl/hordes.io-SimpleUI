@@ -1,5 +1,7 @@
 # Hordes.io – Movable UI (Layout Editor)
 
+<img width="3314" height="2224" alt="Bildschirmfoto 2026-06-13 um 12 30 30" src="https://github.com/user-attachments/assets/1e2d0c5a-f2ef-42bd-819c-0bbe42cf4691" />
+
 Ein schlankes UserScript, das **jedes einzelne UI-Element** auf
 [hordes.io](https://hordes.io/play) verschieb-, skalier- und ein-/ausblendbar
 macht. Modern, minimal, ohne Abhängigkeiten.
