@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Hordes.io – Movable UI (Layout Editor)
 // @namespace    https://hordes.io/
-// @version      3.5.0
+// @version      3.6.0
 // @description  Jedes UI-Element einzeln verschieben & per Rand-Griff skalieren (inkl. Buff-Icon-Größe und Minimap selbst), ein-/ausblenden, Hintergründe abschalten, Layout exportieren/importieren. Im Bearbeiten-Modus werden Spiel-Tooltips/Klicks blockiert. Speichert alles, übersteht Game-Reloads.
 // @author       xmarzl
 // @match        https://hordes.io/play
@@ -63,10 +63,11 @@
     { cat: 'Gruppe', sel: '.partyframes .buffarray', multi: true, rz: true,
       id: (el, i) => 'party_buffs_' + i, name: (el, i) => 'Gruppe: Buffs #' + (i + 1) },
 
-    // ---- Menü-Buttons (oben rechts, jeder einzeln; nur echte Buttons mit id,
-    //      nicht der native Hover-Tooltip ohne id) ----
-    { cat: 'Menü-Buttons', sel: '.l-corner-ur .btnbar > div[id]', multi: true,
-      id: (el, i) => 'menu_' + (el.id || ('i' + i)), name: (el, i) => MENU_NAMES[el.id] || ('Button ' + (i + 1)) },
+    // ---- Menü-Buttons (oben rechts, jeder einzeln). Auch der native Hover-Tooltip
+    //      (div ohne id) wird registriert, damit man ihn im Editor (nach F8) bewegen kann. ----
+    { cat: 'Menü-Buttons', sel: '.l-corner-ur .btnbar > div', multi: true,
+      id: el => 'menu_' + (el.id || 'tip'),
+      name: el => el.id ? (MENU_NAMES[el.id] || el.id) : ('Hover-Label: ' + (el.textContent || '').trim()) },
 
     // ---- Statusleiste (oben links, einzeln) ----
     { cat: 'Statusleiste', sel: '.l-corner-ul .btnbar > div', multi: true,
@@ -78,10 +79,6 @@
     { cat: 'Diverses', sel: '#minimapcontainer canvas', id: 'minimap', name: 'Minimap', rz: true },
     { cat: 'Diverses', sel: '.l-corner-ll', id: 'chat', name: 'Chat', rz: true },
     { cat: 'Diverses', sel: '#expbar', id: 'expbar', name: 'EXP-Leiste', rz: true },
-    // Inventar/Stash-Raster: Resize ändert Spaltenzahl (Breite) + quadratische Icon-Größe (Höhe)
-    { cat: 'Fenster', sel: '.slotcontainer', multi: true, rz: true,
-      id: el => { const t = el.closest('.window') && el.closest('.window').querySelector('.titleframe .title'); return 'grid_' + ((t ? t.textContent.trim() : 'x').toLowerCase()); },
-      name: el => { const t = el.closest('.window') && el.closest('.window').querySelector('.titleframe .title'); return (t ? t.textContent.trim() : 'Raster') + ': Spalten/Größe'; } },
   ];
 
   const OPTIONS = [
@@ -106,6 +103,8 @@
 
   const STORAGE_KEY = 'hordes-movable-ui-v3';
   const EDGE = 8;
+  const VERSION = '3.6.0';
+  const REPO_RAW = 'https://raw.githubusercontent.com/xmarzl/hordes.io-SimpleUI/main/hordes-movable-ui.user.js';
 
   /* =========================================================================
    *  STATE
@@ -113,7 +112,7 @@
   let state = loadState();                 // { items:{id:{l,t,w,h,bs,hidden}}, options:{} }
   const registry = new Map();              // id -> { el, name, cat }
   const splitObservers = new Map();        // baseBuffId -> { obs, pos, neg }
-  let editMode = false, listOpen = false, hashImported = false;
+  let editMode = false, listOpen = false, hashImported = false, updateChecked = false, updateAvailable = null;
   let drag = null, hoverHost = null, layoutObserver = null, saveTimer = null;
 
   const cssEsc = (window.CSS && CSS.escape) ? CSS.escape : (s) => String(s).replace(/[^\w-]/g, '\\$&');
@@ -201,6 +200,61 @@
   }
   let _lblQ = false;
   function scheduleLabels() { if (_lblQ) return; _lblQ = true; requestAnimationFrame(() => { _lblQ = false; renderLabels(); }); }
+
+  // Inventar/Stash: Spalten + optionale (quadratische) Icon-Größe, gesteuert per Regler
+  function invKey(grid) {
+    const w = grid.closest('.window'); const t = w && w.querySelector('.titleframe .title');
+    return 'grid_' + ((t ? t.textContent.trim() : 'x').toLowerCase());
+  }
+  function applyInvGrid(grid) {
+    const c = state.items[invKey(grid)] || {};
+    if (c.cols != null) grid.style.setProperty('--inv-cols', c.cols); else grid.style.removeProperty('--inv-cols');
+    if (c.cell != null) { grid.style.setProperty('--inv-cell', c.cell + 'px'); grid.classList.add('simpleui-invsized'); }
+    else { grid.style.removeProperty('--inv-cell'); grid.classList.remove('simpleui-invsized'); }
+  }
+  function setupInvControls() {
+    document.querySelectorAll('.slotcontainer:not(.simpleui-invctl-initd)').forEach(grid => {
+      grid.classList.add('simpleui-invctl-initd');
+      applyInvGrid(grid);
+      const key = invKey(grid);
+      const ctl = document.createElement('div'); ctl.className = 'simpleui-invctl';
+      ctl.innerHTML = '<span>Spalten</span><button data-inv="cols-">−</button><b class="simpleui-invcols">5</b><button data-inv="cols+">+</button>'
+        + '<span class="simpleui-invsep">Größe</span><button data-inv="cell-">−</button><b class="simpleui-invcell">auto</b><button data-inv="cell+">+</button>';
+      const render = () => { const c = state.items[key] || {}; ctl.querySelector('.simpleui-invcols').textContent = (c.cols || 5); ctl.querySelector('.simpleui-invcell').textContent = (c.cell ? c.cell + 'px' : 'auto'); };
+      ctl.addEventListener('click', e => {
+        const b = e.target.closest('button'); if (!b) return;
+        const c = cfgOf(key); const a = b.dataset.inv;
+        if (a === 'cols+') c.cols = Math.min(20, (c.cols || 5) + 1);
+        else if (a === 'cols-') c.cols = Math.max(1, (c.cols || 5) - 1);
+        else if (a === 'cell+') c.cell = Math.min(80, (c.cell || 46) + 2);
+        else if (a === 'cell-') c.cell = Math.max(24, (c.cell || 46) - 2);
+        applyInvGrid(grid); render(); saveSoon();
+      });
+      grid.parentNode.insertBefore(ctl, grid);
+      render();
+    });
+  }
+
+  // Update-Check: vergleicht @version auf GitHub mit der lokalen VERSION
+  function cmpVer(a, b) { const pa = a.split('.').map(Number), pb = b.split('.').map(Number); for (let i = 0; i < 3; i++) { if ((pa[i] || 0) !== (pb[i] || 0)) return (pa[i] || 0) - (pb[i] || 0); } return 0; }
+  function checkUpdate() {
+    if (updateChecked) return; updateChecked = true;
+    fetch(REPO_RAW, { cache: 'no-store' }).then(r => r.text()).then(txt => {
+      const m = txt.match(/@version\s+([0-9.]+)/);
+      if (m && cmpVer(m[1], VERSION) > 0) { updateAvailable = m[1]; showUpdateUI(); }
+    }).catch(() => {});
+  }
+  function showUpdateUI() {
+    const cog = document.getElementById('syscog'); if (cog) cog.classList.add('simpleui-update');
+    if (sessionStorage.getItem('simpleui-update-dismissed') === '1') return;
+    if (document.getElementById('simpleui-update-banner')) return;
+    const b = document.createElement('div'); b.id = 'simpleui-update-banner';
+    b.innerHTML = '<span>🔔 Movable UI: Neues Update verfügbar (v' + updateAvailable + ')</span>'
+      + '<a href="' + REPO_RAW + '" target="_blank" rel="noopener">Jetzt aktualisieren</a>'
+      + '<button class="simpleui-ub-close" title="Schließen">✕</button>';
+    document.body.appendChild(b);
+    b.querySelector('.simpleui-ub-close').addEventListener('click', () => { b.remove(); sessionStorage.setItem('simpleui-update-dismissed', '1'); });
+  }
   function reapplyAll() { document.querySelectorAll('[data-mui-id]').forEach(el => applySaved(el, el.dataset.muiId)); }
 
   /* =========================================================================
@@ -232,8 +286,10 @@
         register(el, 'win:' + title, title, 'Fenster', !/^(inventory|stash)$/i.test(title));
       });
       setupPctBars();
+      setupInvControls();
       injectSettingsTab();
       if (state.options.splitbuffs) document.querySelectorAll('.buffarray[data-mui-id]:not(.mui-splitsource)').forEach(setupSplit);
+      if (updateAvailable) showUpdateUI();
       if (editMode) scheduleLabels();
     } catch (err) { /* nie den Tab blockieren */ }
     finally { if (layoutObserver) { const lay = document.querySelector('.layout'); if (lay) layoutObserver.observe(lay, { childList: true, subtree: true }); } }
@@ -258,7 +314,10 @@
     if (L) return 'w'; if (R) return 'e'; if (T) return 'n'; if (B) return 's';
     return null;
   }
-  function isInOurUI(t) { return t.closest && (t.closest('#mui-panel') || t.closest('#mui-list')); }
+  function isInOurUI(t) {
+    return t.closest && (t.closest('#mui-panel') || t.closest('#mui-list') || t.closest('.simpleui-invctl')
+      || t.closest('.simpleui-pane') || t.closest('.simpleui-choice') || t.closest('#simpleui-update-banner'));
+  }
 
   function onPointerDown(e) {
     if (!editMode || e.button !== 0) return;
@@ -374,7 +433,9 @@
   }
   function resetAll() {
     if (!confirm('Alle Positionen, Größen, Sichtbarkeiten und Optionen zurücksetzen?')) return;
-    state.items = {}; state.options = {}; applyOptions(); reapplyAll(); saveSoon(); if (listOpen) renderList();
+    state.items = {}; state.options = {}; applyOptions(); reapplyAll();
+    document.querySelectorAll('.slotcontainer').forEach(applyInvGrid);
+    saveSoon(); if (listOpen) renderList();
   }
   function toggleOption(key) { state.options[key] = !state.options[key]; applyOptions(); saveSoon(); if (listOpen) renderList(); }
   let flashTimer = null;
@@ -399,7 +460,8 @@
       const obj = JSON.parse(dec(code));
       if (!obj || typeof obj !== 'object' || !obj.items) throw new Error('bad');
       state.items = obj.items || {}; state.options = obj.options || {};
-      applyOptions(); reapplyAll(); saveSoon(); if (listOpen) renderList();
+      applyOptions(); reapplyAll(); document.querySelectorAll('.slotcontainer').forEach(applyInvGrid);
+      saveSoon(); if (listOpen) renderList();
     } catch (e) { window.alert('Ungültiger Layout-Code.'); }
   }
   function importFromHash() {
@@ -491,6 +553,12 @@
   function buildSettingsPane() {
     const pane = document.createElement('div'); pane.className = 'menu panel-black scrollbar simpleui-pane'; pane.style.display = 'none';
     const h = document.createElement('h3'); h.className = 'textprimary'; h.textContent = 'Movable UI'; pane.appendChild(h);
+    if (updateAvailable) {
+      const ub = document.createElement('div'); ub.className = 'simpleui-pane-update';
+      ub.textContent = 'Neues Update verfügbar (v' + updateAvailable + ') – klicke zum Aktualisieren';
+      ub.addEventListener('click', () => window.open(REPO_RAW, '_blank'));
+      pane.appendChild(ub);
+    }
     const actions = document.createElement('div'); actions.className = 'simpleui-actions';
     actions.appendChild(suiBtn('Bearbeiten-Modus (F8)', () => {
       const win = pane.closest('.window'); const x = win && win.querySelector('.titleframe img[src*="cross"]');
@@ -498,10 +566,6 @@
       setEditMode(true);
     }));
     actions.appendChild(suiBtn('Elemente-Liste', () => { setListOpen(!listOpen); }));
-    const io = document.createElement('div'); io.className = 'simpleui-io';
-    io.appendChild(suiBtn('Export', exportLayout));
-    io.appendChild(suiBtn('Import', importLayout));
-    actions.appendChild(io);
     actions.appendChild(suiBtn('Reset', resetAll));
     pane.appendChild(actions);
     const grid = document.createElement('div'); grid.className = 'settings simpleui-grid';
@@ -514,6 +578,22 @@
     suiHead(grid, 'Mana / Wut / Energie (Text)');
     ['mpnolevel', 'mpnonum', 'mppct'].forEach(k => suiToggleRow(grid, TEXTOPTS.find(t => t.key === k).name, !!state.options[k], () => toggleOption(k)));
     pane.appendChild(grid);
+
+    const ie = document.createElement('div'); ie.className = 'simpleui-ie';
+    const ieh = document.createElement('div'); ieh.className = 'textprimary'; ieh.textContent = 'Import / Export'; ie.appendChild(ieh);
+    const expL = document.createElement('label'); expL.textContent = 'Export – anklicken & kopieren:'; ie.appendChild(expL);
+    const expF = document.createElement('input'); expF.readOnly = true; expF.className = 'simpleui-export';
+    const expVal = () => enc(JSON.stringify({ items: state.items, options: state.options }));
+    expF.value = expVal();
+    expF.addEventListener('focus', () => { expF.value = expVal(); expF.select(); });
+    ie.appendChild(expF);
+    const impL = document.createElement('label'); impL.textContent = 'Import – Code einfügen & "Import" drücken:'; ie.appendChild(impL);
+    const row = document.createElement('div'); row.className = 'simpleui-iorow';
+    const impF = document.createElement('input'); impF.placeholder = 'Layout-Code'; impF.className = 'simpleui-import';
+    row.appendChild(impF);
+    row.appendChild(suiBtn('Import', () => { const v = impF.value.trim(); if (v) applyImport(v); }));
+    ie.appendChild(row);
+    pane.appendChild(ie);
     return pane;
   }
   function injectSettingsTab() {
@@ -582,9 +662,14 @@
       byCat.get(cat).forEach(([id, entry]) => {
         const hidden = !!cfgOf(id).hidden;
         const isBuff = entry.el.classList && (entry.el.classList.contains('mui-bcont') || entry.el.classList.contains('buffarray'));
-        const dirBtns = isBuff
-          ? '<button class="mui-dir" data-dir="x" title="Aufbau links/rechts">⇄</button><button class="mui-dir" data-dir="y" title="Aufbau hoch/runter">⇅</button>'
-          : '';
+        let dirBtns = '';
+        if (isBuff) {
+          const cc = cfgOf(id);
+          const ax = cc.dirx === 'rtl' ? '←' : '→';
+          const ay = cc.diry === 'up' ? '↑' : '↓';
+          dirBtns = '<button class="mui-dir" data-dir="x" title="Aufbau waagerecht (klick zum Wechseln)">' + ax + '</button>'
+            + '<button class="mui-dir" data-dir="y" title="Aufbau senkrecht (klick zum Wechseln)">' + ay + '</button>';
+        }
         html += '<div class="mui-row' + (hidden ? ' mui-row-hidden' : '') + (isBuff ? ' mui-row-buff' : '') + '" data-id="' + String(id).replace(/"/g, '&quot;') + '">'
           + '<span class="mui-row-name">' + entry.name + '</span>' + dirBtns
           + '<button class="mui-eye" title="Ein-/Ausblenden">' + (hidden ? '🚫' : '👁') + '</button>'
@@ -668,10 +753,39 @@
       .simpleui-mp-pct .progressBar.bgmana > .right{ display:none !important; }
       .simpleui-mp-pct .progressBar.bgmana > .simpleui-pct{ display:inline !important; }
 
-      /* Inventar/Stash: feste quadratische Zellen + steuerbare Spalten/Größe (kein Strecken) */
-      .slotcontainer{ width:max-content !important; grid-template-columns:repeat(var(--inv-cols,5), var(--inv-cell,46px)) !important; justify-content:start !important; }
-      .slotcontainer > .slot{ width:var(--inv-cell,46px) !important; height:var(--inv-cell,46px) !important; min-width:0 !important; min-height:0 !important; }
-      .slotcontainer > .slot img.icon{ width:100% !important; height:100% !important; object-fit:contain; }
+      /* Inventar/Stash: Spalten fixiert (kein Strecken), Zellen natürlich-quadratisch.
+         Eigene Größe nur wenn vom Nutzer gesetzt (.simpleui-invsized). */
+      .slotcontainer{ width:max-content !important; grid-template-columns:repeat(var(--inv-cols,5), max-content) !important; justify-content:start !important; }
+      .slotcontainer.simpleui-invsized{ grid-template-columns:repeat(var(--inv-cols,5), var(--inv-cell,46px)) !important; }
+      .slotcontainer.simpleui-invsized > .slot{ width:var(--inv-cell,46px) !important; height:var(--inv-cell,46px) !important; min-width:0 !important; min-height:0 !important; }
+      .slotcontainer.simpleui-invsized > .slot img.icon{ width:100% !important; height:100% !important; object-fit:contain; }
+      /* Inventar-Regler (nur im Editor sichtbar) */
+      .simpleui-invctl{ display:none; gap:4px; align-items:center; padding:4px 6px; margin:2px 0; width:max-content;
+        background:rgba(16,20,28,.92); border:1px solid rgba(120,160,200,.35); border-radius:8px; color:#e7f1ff;
+        font:600 11px/1 -apple-system,system-ui,sans-serif; pointer-events:all; }
+      body.mui-editing .simpleui-invctl{ display:flex; }
+      .simpleui-invctl button{ width:20px; height:20px; border-radius:5px; border:1px solid rgba(120,160,200,.4);
+        background:rgba(40,52,70,.95); color:#fff; cursor:pointer; line-height:1; padding:0; }
+      .simpleui-invctl .simpleui-invsep{ margin-left:8px; }
+
+      /* Update-Hinweis */
+      #syscog.simpleui-update{ position:relative; }
+      #syscog.simpleui-update::after{ content:''; position:absolute; top:-2px; right:-2px; width:9px; height:9px;
+        border-radius:50%; background:#e0332a; box-shadow:0 0 0 2px rgba(0,0,0,.5); z-index:5; }
+      #simpleui-update-banner{ position:fixed; top:0; left:0; right:0; z-index:2147483647; display:flex; align-items:center;
+        justify-content:center; gap:16px; background:rgba(160,30,40,.97); color:#fff;
+        font:700 14px/1 -apple-system,system-ui,sans-serif; padding:11px 44px; box-shadow:0 2px 14px rgba(0,0,0,.5); }
+      #simpleui-update-banner a{ color:#fff; text-decoration:underline; }
+      #simpleui-update-banner .simpleui-ub-close{ position:absolute; right:12px; background:none; border:0; color:#fff; font-size:16px; cursor:pointer; }
+      .simpleui-pane-update{ background:rgba(160,30,40,.92); color:#fff; text-align:center; font-weight:700; padding:9px; border-radius:6px; margin-bottom:10px; cursor:pointer; }
+
+      /* Import/Export-Sektion */
+      .simpleui-ie{ margin-top:12px; display:flex; flex-direction:column; gap:4px; }
+      .simpleui-ie .textprimary{ margin-bottom:2px; }
+      .simpleui-ie label{ font-size:11px; color:#acc4dd; }
+      .simpleui-ie input{ width:100%; box-sizing:border-box; }
+      .simpleui-iorow{ display:flex; gap:5px; }
+      .simpleui-iorow input{ flex:1; }
 
       /* Buff/Debuff-Aufbaurichtung */
       .buffarray[data-mui-id].dir-rtl > .container, .mui-bcont.dir-rtl{ flex-direction:row-reverse; }
@@ -775,6 +889,7 @@
     if (!layoutObserver) layoutObserver = new MutationObserver(queueScan);
     scan();
     importFromHash();
+    checkUpdate();
   }
   new MutationObserver(() => { if (document.querySelector('.layout')) boot(); }).observe(document.body, { childList: true, subtree: true });
   boot();

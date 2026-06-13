@@ -14,13 +14,27 @@ minimal, no dependencies.
 
 ### Installation
 
-1. Install the **Tampermonkey** browser extension (Chrome/Edge/Firefox).
-2. Drag the file `hordes-movable-ui.user.js` into the Tampermonkey dashboard
-   (or create a new script and paste its contents).
-3. Save, open / reload `https://hordes.io/play`.
+**Never used a userscript before? It takes about 2 minutes.**
 
-Open the game **Settings (cog) → Movable UI** tab, or just press **`F8`**.
-The editing toolbar only appears while you are editing.
+1. **Install Tampermonkey** — a free browser extension that runs userscripts:
+   - [Chrome / Edge / Brave / Opera](https://chromewebstore.google.com/detail/tampermonkey/dhdgffkkebhmkfjojejmpbldmpobfkfo)
+   - [Firefox](https://addons.mozilla.org/firefox/addon/tampermonkey/)
+   - [Safari](https://apps.apple.com/app/tampermonkey/id1482490089)
+
+   After installing you will see the Tampermonkey icon in your browser's toolbar.
+2. **Install the script** — click this link; Tampermonkey opens an install page,
+   then click **Install**:
+   👉 **[Install Movable UI](https://raw.githubusercontent.com/xmarzl/hordes.io-SimpleUI/main/hordes-movable-ui.user.js)**
+
+   *Alternative:* open the Tampermonkey dashboard, drag the file
+   `hordes-movable-ui.user.js` in (or create a new script, paste its contents,
+   and save).
+3. **Open the game** at <https://hordes.io/play> and reload the page once.
+
+That's it. Open the game **Settings (⚙ cog) → Movable UI** tab, or just press
+**`F8`**, to start arranging your UI. The editing toolbar only appears while you
+are editing. When a newer version exists, the script shows a banner in the
+Movable UI tab and a red dot on the cog icon — click the link to update.
 
 ### Usage
 
@@ -119,13 +133,29 @@ macht. Modern, minimal, ohne Abhängigkeiten.
 
 ### Installation
 
-1. Browser-Erweiterung **Tampermonkey** installieren (Chrome/Edge/Firefox).
-2. Datei `hordes-movable-ui.user.js` per Drag&Drop ins Tampermonkey-Dashboard
-   ziehen (oder neues Script anlegen und Inhalt einfügen).
-3. Speichern, `https://hordes.io/play` öffnen / neu laden.
+**Noch nie ein UserScript benutzt? Dauert ca. 2 Minuten.**
 
-Öffne im Spiel **Einstellungen (Zahnrad) → Movable UI**, oder drücke **`F8`**.
-Die Bearbeiten-Leiste erscheint nur während des Bearbeitens.
+1. **Tampermonkey installieren** — eine kostenlose Browser-Erweiterung, die
+   UserScripts ausführt:
+   - [Chrome / Edge / Brave / Opera](https://chromewebstore.google.com/detail/tampermonkey/dhdgffkkebhmkfjojejmpbldmpobfkfo)
+   - [Firefox](https://addons.mozilla.org/firefox/addon/tampermonkey/)
+   - [Safari](https://apps.apple.com/app/tampermonkey/id1482490089)
+
+   Danach erscheint das Tampermonkey-Symbol in der Browser-Symbolleiste.
+2. **Script installieren** — auf diesen Link klicken; Tampermonkey öffnet eine
+   Installationsseite, dort auf **Installieren** klicken:
+   👉 **[Movable UI installieren](https://raw.githubusercontent.com/xmarzl/hordes.io-SimpleUI/main/hordes-movable-ui.user.js)**
+
+   *Alternativ:* Tampermonkey-Dashboard öffnen, die Datei
+   `hordes-movable-ui.user.js` hineinziehen (oder neues Script anlegen, Inhalt
+   einfügen, speichern).
+3. **Spiel öffnen:** <https://hordes.io/play> aufrufen und die Seite einmal neu laden.
+
+Fertig. Öffne im Spiel **Einstellungen (⚙ Zahnrad) → Movable UI**, oder drücke
+**`F8`**, um deine UI einzurichten. Die Bearbeiten-Leiste erscheint nur während
+des Bearbeitens. Gibt es eine neuere Version, zeigt das Script ein Banner im
+Movable-UI-Reiter und einen roten Punkt am Zahnrad — zum Aktualisieren auf den
+Link klicken.
 
 ### Bedienung
 
